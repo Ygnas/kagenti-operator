@@ -163,11 +163,17 @@ func (r *MLflowReconciler) mlflowClient(baseURL string) *mlflow.Client {
 }
 
 // trackingURI returns the MLflow tracking URI, using the override if set.
+// After the first successful resolution, the result is stored in
+// ResolveTrackingURI so subsequent reconciles skip CRD/Service lookups.
 func (r *MLflowReconciler) trackingURI(ctx context.Context) string {
 	if r.ResolveTrackingURI != nil {
 		return r.ResolveTrackingURI(ctx)
 	}
-	return r.resolveTrackingURI(ctx)
+	uri := r.resolveTrackingURI(ctx)
+	if uri != "" {
+		r.ResolveTrackingURI = func(_ context.Context) string { return uri }
+	}
+	return uri
 }
 
 // resolveTrackingURI discovers the MLflow tracking URI via the
@@ -184,12 +190,29 @@ func (r *MLflowReconciler) resolveTrackingURI(ctx context.Context) string {
 	for i := range list.Items {
 		cr := &list.Items[i]
 		if meta.IsStatusConditionTrue(cr.Status.Conditions, "Available") {
-			if cr.Status.Address == nil || cr.Status.Address.URL == "" {
-				logger.Info("MLflow CR is Available but status.address.url is not set, skipping", "cr", cr.GetName())
-				continue
+			var uri string
+			if cr.Status.Address != nil && cr.Status.Address.URL != "" {
+				uri = cr.Status.Address.URL
+			} else {
+				// Fallback: the MLflow CRD is cluster-scoped so GetNamespace() is
+				// empty. Discover the namespace by finding the Service that matches
+				// the CR name.
+				svcList := &corev1.ServiceList{}
+				if err := r.List(ctx, svcList); err == nil {
+					for j := range svcList.Items {
+						if svcList.Items[j].Name == cr.GetName() {
+							uri = fmt.Sprintf("https://%s.%s.svc.cluster.local:8443", svcList.Items[j].Name, svcList.Items[j].Namespace)
+							break
+						}
+					}
+				}
+				if uri == "" {
+					logger.Info("status.address.url not set and no matching Service found, skipping", "cr", cr.GetName())
+					continue
+				}
+				logger.Info("status.address.url not set, using Service URL", "cr", cr.GetName(), "uri", uri)
 			}
-			uri := cr.Status.Address.URL
-			logger.V(1).Info("Auto-discovered MLflow tracking URI", "uri", uri, "cr", cr.GetName())
+			logger.Info("Resolved MLflow tracking URI", "uri", uri, "cr", cr.GetName())
 			return uri
 		}
 	}
