@@ -228,7 +228,10 @@ var _ = Describe("MLflow Controller", func() {
 			for _, e := range updated.Spec.Template.Spec.Containers[0].Env {
 				envMap[e.Name] = e.Value
 			}
-			Expect(envMap["MLFLOW_TRACKING_URI"]).To(Equal(server.URL))
+			// The agent pods receive the /mlflow-suffixed URI for the Python SDK,
+			// while the operator client uses the raw server URL for REST API calls.
+			expectedAgentURI := server.URL + "/mlflow"
+			Expect(envMap["MLFLOW_TRACKING_URI"]).To(Equal(expectedAgentURI))
 			Expect(envMap["MLFLOW_TRACKING_AUTH"]).To(Equal("kubernetes-namespaced"))
 			Expect(envMap["MLFLOW_EXPERIMENT_ID"]).To(Equal("exp-123"))
 			Expect(envMap["MLFLOW_EXPERIMENT_NAME"]).To(Equal("mlflow-full"))
@@ -236,7 +239,7 @@ var _ = Describe("MLflow Controller", func() {
 
 			Expect(updated.Spec.Template.Annotations[AnnotationMLflowExperimentID]).To(Equal("exp-123"))
 			Expect(updated.Spec.Template.Annotations[AnnotationMLflowExperimentName]).To(Equal("mlflow-full"))
-			Expect(updated.Spec.Template.Annotations[AnnotationMLflowTrackingURI]).To(Equal(server.URL))
+			Expect(updated.Spec.Template.Annotations[AnnotationMLflowTrackingURI]).To(Equal(expectedAgentURI))
 			Expect(updated.Spec.Template.Annotations[AnnotationMLflowTrackingAuth]).To(Equal("kubernetes-namespaced"))
 		})
 

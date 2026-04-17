@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -99,13 +100,18 @@ func (r *MLflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	// agentTrackingURI is the URI exposed to agent pods via MLFLOW_TRACKING_URI.
+	// The Python MLflow SDK expects the /mlflow path prefix, while the REST API
+	// used by the operator client is served at the root.
+	agentTrackingURI := strings.TrimRight(trackingURI, "/") + "/mlflow"
+
 	experimentName := dep.Name
 
 	annotations := dep.Spec.Template.Annotations
 	if annotations != nil &&
 		annotations[AnnotationMLflowExperimentID] != "" &&
 		annotations[AnnotationMLflowExperimentName] == experimentName &&
-		annotations[AnnotationMLflowTrackingURI] == trackingURI {
+		annotations[AnnotationMLflowTrackingURI] == agentTrackingURI {
 		logger.V(1).Info("MLflow already configured, no-op")
 		return ctrl.Result{}, nil
 	}
@@ -134,7 +140,7 @@ func (r *MLflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	if err := r.configureDeployment(ctx, dep, trackingURI, experimentID, experimentName); err != nil {
+	if err := r.configureDeployment(ctx, dep, agentTrackingURI, experimentID, experimentName); err != nil {
 		logger.Error(err, "Failed to configure Deployment with MLflow")
 		return ctrl.Result{}, err
 	}
