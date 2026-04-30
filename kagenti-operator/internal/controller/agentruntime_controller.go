@@ -49,6 +49,11 @@ const (
 	// AnnotationConfigHash is the annotation applied to PodTemplateSpec to trigger rolling updates.
 	AnnotationConfigHash = "kagenti.io/config-hash"
 
+	// AnnotationRestartPending marks a Sandbox that was scaled to 0 and needs
+	// to be scaled back to 1 on the next reconcile cycle. Two-phase restart
+	// avoids a race with the Sandbox controller's pod-name annotation.
+	AnnotationRestartPending = "kagenti.io/restart-pending"
+
 	// Condition types for AgentRuntime status.
 	ConditionTypeReady          = "Ready"
 	ConditionTypeTargetResolved = "TargetResolved"
@@ -121,6 +126,13 @@ func (r *AgentRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	r.setCondition(rt, ConditionTypeTargetResolved, metav1.ConditionTrue, "TargetFound",
 		fmt.Sprintf("%s %s resolved", rt.Spec.TargetRef.Kind, rt.Spec.TargetRef.Name))
+
+	// 4.1. Complete two-phase Sandbox restart if pending.
+	if rt.Spec.TargetRef.Kind == "Sandbox" {
+		if result, done, err := r.completeSandboxRestart(ctx, rt); done {
+			return result, err
+		}
+	}
 
 	// 4.5. Ensure required authbridge ConfigMaps exist in the namespace.
 	// Copies templates from kagenti-system if missing, matching the backend's
@@ -293,64 +305,94 @@ func (r *AgentRuntimeReconciler) applyWorkloadConfig(ctx context.Context, rt *ag
 	}
 
 	// Sandbox pods don't restart on podTemplate changes (upstream limitation).
-	// Trigger a restart by scaling replicas 0 → 1 when config actually changed.
+	// Phase 1: scale to 0 and mark restart-pending. Phase 2 runs on the next
+	// reconcile (triggered by the Sandbox watch) to clear stale annotations
+	// and scale back to 1. Two-phase avoids a race with the Sandbox controller.
 	if ref.Kind == "Sandbox" && configHashChanged {
-		if err := r.restartSandbox(ctx, key); err != nil {
-			return fmt.Errorf("sandbox restart failed: %w", err)
+		if err := r.beginSandboxRestart(ctx, key); err != nil {
+			return fmt.Errorf("sandbox restart (phase 1) failed: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// restartSandbox performs a scale 0→1 cycle to restart a Sandbox pod.
-// Sandbox pods don't roll out on podTemplate changes, so this is the
-// workaround for applying config changes that require a pod restart.
-func (r *AgentRuntimeReconciler) restartSandbox(ctx context.Context, key types.NamespacedName) error {
+// beginSandboxRestart is phase 1 of a two-phase Sandbox restart.
+// It scales the Sandbox to 0 replicas and sets the restart-pending annotation.
+// Phase 2 (completeSandboxRestart) runs on the next reconcile to clear the
+// stale pod-name annotation and scale back to 1.
+func (r *AgentRuntimeReconciler) beginSandboxRestart(ctx context.Context, key types.NamespacedName) error {
 	logger := log.FromContext(ctx)
-	logger.Info("Restarting Sandbox via scale 0→1", "sandbox", key.Name)
+	logger.Info("Sandbox restart phase 1: scaling to 0", "sandbox", key.Name)
 
-	patchScale := func(replicas int64) error {
-		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			obj := &unstructured.Unstructured{}
-			obj.SetGroupVersionKind(sandboxGVK)
-			if err := r.Get(ctx, key, obj); err != nil {
-				return err
-			}
-			if err := unstructured.SetNestedField(obj.Object, replicas, "spec", "replicas"); err != nil {
-				return err
-			}
-			return r.Update(ctx, obj)
-		})
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(sandboxGVK)
+		if err := r.Get(ctx, key, obj); err != nil {
+			return err
+		}
+		if err := unstructured.SetNestedField(obj.Object, int64(0), "spec", "replicas"); err != nil {
+			return err
+		}
+		annotations := obj.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[AnnotationRestartPending] = "true"
+		obj.SetAnnotations(annotations)
+		return r.Update(ctx, obj)
+	})
+}
+
+// completeSandboxRestart is phase 2 of a two-phase Sandbox restart.
+// It checks for the restart-pending annotation on a Sandbox with replicas=0,
+// clears the stale pod-name annotation, removes restart-pending, and scales
+// back to 1. Returns (result, true, err) if it handled the restart, or
+// (_, false, nil) if no restart was pending.
+func (r *AgentRuntimeReconciler) completeSandboxRestart(ctx context.Context, rt *agentv1alpha1.AgentRuntime) (ctrl.Result, bool, error) {
+	logger := log.FromContext(ctx)
+	ref := rt.Spec.TargetRef
+	key := types.NamespacedName{Name: ref.Name, Namespace: rt.Namespace}
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(sandboxGVK)
+	if err := r.Get(ctx, key, obj); err != nil {
+		return ctrl.Result{}, false, nil
 	}
 
-	if err := patchScale(0); err != nil {
-		return fmt.Errorf("scale to 0: %w", err)
+	annotations := obj.GetAnnotations()
+	if annotations[AnnotationRestartPending] != "true" {
+		return ctrl.Result{}, false, nil
 	}
 
-	// The Sandbox controller tracks the adopted pod via an annotation.
-	// Clear it so the controller creates a fresh pod on scale-up.
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	logger.Info("Sandbox restart phase 2: clearing pod-name and scaling to 1", "sandbox", key.Name)
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(sandboxGVK)
 		if err := r.Get(ctx, key, obj); err != nil {
 			return err
 		}
 		annotations := obj.GetAnnotations()
-		if annotations != nil {
-			delete(annotations, "agents.x-k8s.io/pod-name")
-			obj.SetAnnotations(annotations)
-			return r.Update(ctx, obj)
+		delete(annotations, "agents.x-k8s.io/pod-name")
+		delete(annotations, AnnotationRestartPending)
+		obj.SetAnnotations(annotations)
+		if err := unstructured.SetNestedField(obj.Object, int64(1), "spec", "replicas"); err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
-		logger.Info("Failed to clear pod-name annotation, proceeding with scale-up", "error", err)
+		return r.Update(ctx, obj)
+	})
+	if err != nil {
+		logger.Error(err, "Sandbox restart phase 2 failed, will retry")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, true, nil
 	}
 
-	if err := patchScale(1); err != nil {
-		return fmt.Errorf("scale to 1: %w", err)
+	if r.Recorder != nil {
+		r.Recorder.Event(rt, corev1.EventTypeNormal, "SandboxRestarted",
+			fmt.Sprintf("Sandbox %s restarted via scale 0→1", ref.Name))
 	}
-	return nil
+
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, true, nil
 }
 
 // countConfiguredPods counts pods that have the kagenti.io/type label matching the runtime type.
