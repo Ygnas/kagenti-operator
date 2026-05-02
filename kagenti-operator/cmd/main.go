@@ -68,6 +68,24 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// getOperatorNamespace returns the namespace the operator is running in.
+// It reads from the service account namespace file, falling back to a default.
+func getOperatorNamespace() string {
+	// Read namespace from service account mount
+	nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		setupLog.Info("Could not read operator namespace from service account, using default",
+			"error", err, "default", "kagenti-system")
+		return "kagenti-system"
+	}
+	ns := strings.TrimSpace(string(nsBytes))
+	if ns == "" {
+		setupLog.Info("Operator namespace is empty, using default", "default", "kagenti-system")
+		return "kagenti-system"
+	}
+	return ns
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -381,10 +399,14 @@ func main() {
 	}
 
 	if enableOperatorClientRegistration {
+		operatorNS := getOperatorNamespace()
+		setupLog.Info("Client registration controller will read keycloak-admin-secret from operator namespace",
+			"namespace", operatorNS)
 		if err = (&controller.ClientRegistrationReconciler{
 			Client:                  mgr.GetClient(),
 			APIReader:               mgr.GetAPIReader(),
 			Scheme:                  mgr.GetScheme(),
+			OperatorNamespace:       operatorNS,
 			SpireTrustDomain:        spireTrustDomain,
 			KeycloakAdminTokenCache: &keycloak.CachedAdminTokenProvider{},
 		}).SetupWithManager(mgr); err != nil {
