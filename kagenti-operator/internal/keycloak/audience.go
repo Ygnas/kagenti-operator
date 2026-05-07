@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,7 +40,7 @@ type clientScopeCreateRep struct {
 }
 
 type protocolMapperRep struct {
-	ID              string            `json:"id,omitempty"`
+	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	Protocol        string            `json:"protocol"`
 	ProtocolMapper  string            `json:"protocolMapper"`
@@ -248,6 +249,9 @@ func (a *Admin) updateAudienceMapperIfNeeded(ctx context.Context, token, realm, 
 		if mappers[i].Name != scopeName || mappers[i].ProtocolMapper != "oidc-audience-mapper" {
 			continue
 		}
+		if mappers[i].Config == nil {
+			continue
+		}
 		if mappers[i].Config["included.custom.audience"] == audience {
 			return nil // already correct
 		}
@@ -255,6 +259,7 @@ func (a *Admin) updateAudienceMapperIfNeeded(ctx context.Context, token, realm, 
 		mappers[i].Config["included.custom.audience"] = audience
 		return a.putAudienceMapper(ctx, token, realm, scopeID, mappers[i])
 	}
+	slog.Debug("no matching audience mapper found for scope", "scope", scopeName, "scopeID", scopeID)
 	return nil
 }
 
