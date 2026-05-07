@@ -17,7 +17,6 @@ limitations under the License.
 package signature
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -32,17 +31,8 @@ import (
 	agentv1alpha1 "github.com/kagenti/operator/api/v1alpha1"
 )
 
-// Signer produces JWS x5c signatures on AgentCard data using a SPIFFE identity.
-type Signer interface {
-	SignCard(ctx context.Context, cardData *agentv1alpha1.AgentCardData) ([]byte, error)
-	SpiffeID() string
-	Ready() bool
-	Close() error
-}
-
 // SignCard signs AgentCard data with the given private key and certificate chain,
-// producing a JWS x5c signed JSON output. This is the shared signing logic used
-// by both the operator and the init-container.
+// producing a JWS x5c signed JSON output. Used by the agentcard-signer init-container.
 func SignCard(cardData *agentv1alpha1.AgentCardData, privateKey crypto.Signer, certs []*x509.Certificate) ([]byte, error) {
 	if cardData == nil {
 		return nil, fmt.Errorf("card data is nil")
