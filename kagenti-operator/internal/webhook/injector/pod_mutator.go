@@ -267,23 +267,37 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	//   waypoint                — standalone deployment, not injected as sidecar
 	//
 	// Resolution chain (first non-empty wins):
-	//   1. AgentRuntime CR `Spec.AuthBridgeMode`  (per-workload override)
+	//   1. AgentRuntime CR `Spec.AuthBridgeMode`             (per-workload override)
 	//   2. namespace authbridge-runtime-config `mode:` field (namespace default)
-	//   3. ModeProxySidecar                                  (cluster-wide fallback)
+	//   3. kagenti.io/authbridge-mode annotation             (deprecated)
+	//   4. ModeProxySidecar                                  (cluster-wide fallback)
 	authBridgeMode := ""
+	modeSource := ""
 	if arOverrides != nil && arOverrides.AuthBridgeMode != nil {
 		authBridgeMode = *arOverrides.AuthBridgeMode
+		modeSource = "agentruntime-cr"
 	}
 	if authBridgeMode == "" {
-		authBridgeMode = ExtractMode(nsConfig.AuthBridgeRuntimeYAML)
+		if m := ExtractMode(nsConfig.AuthBridgeRuntimeYAML); m != "" {
+			authBridgeMode = m
+			modeSource = "namespace-configmap"
+		}
+	}
+	if authBridgeMode == "" {
+		if m := annotations[AnnotationAuthBridgeMode]; m != "" {
+			authBridgeMode = m
+			modeSource = "annotation-deprecated"
+			mutatorLog.Info("DEPRECATED: kagenti.io/authbridge-mode annotation used; set AgentRuntime.Spec.AuthBridgeMode instead",
+				"namespace", namespace, "crName", crName, "mode", authBridgeMode)
+		}
 	}
 	if authBridgeMode == "" {
 		authBridgeMode = ModeProxySidecar
+		modeSource = "cluster-default"
 	}
 	mutatorLog.Info("resolved authbridge mode",
 		"namespace", namespace, "crName", crName,
-		"mode", authBridgeMode,
-		"fromCR", arOverrides != nil && arOverrides.AuthBridgeMode != nil)
+		"mode", authBridgeMode, "source", modeSource)
 
 	if authBridgeMode == ModeWaypoint {
 		mutatorLog.Info("waypoint mode — skipping sidecar injection (waypoint is a standalone deployment)",

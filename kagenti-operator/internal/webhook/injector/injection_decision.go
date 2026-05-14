@@ -17,6 +17,12 @@ type SidecarDecision struct {
 //
 // Client registration is operator-managed (no in-pod sidecar) and is
 // no longer represented in the decision struct.
+//
+// TODO: rename SpiffeHelper to SpireEnabled (and the
+// kagenti.io/spiffe-helper-inject label to kagenti.io/spire-enabled) so
+// the names match what the field actually controls now that the
+// standalone helper sidecar is gone. Left for a follow-up PR to keep
+// this one focused.
 type InjectionDecision struct {
 	EnvoyProxy   SidecarDecision
 	ProxyInit    SidecarDecision // follows EnvoyProxy

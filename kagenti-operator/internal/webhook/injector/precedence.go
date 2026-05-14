@@ -46,15 +46,7 @@ func (e *PrecedenceEvaluator) Evaluate(
 			e.featureGates.EnvoyProxy,
 			workloadLabels[LabelEnvoyProxyInject],
 		),
-		// SpiffeHelper has no dedicated feature gate — spiffe-helper
-		// is bundled in the combined images and gated only by the
-		// per-workload kagenti.io/spiffe-helper-inject label. Pass
-		// `true` for the gate so only the label can disable it.
-		SpiffeHelper: e.evaluateSidecar(
-			"spiffe-helper",
-			true,
-			workloadLabels[LabelSpiffeHelperInject],
-		),
+		SpiffeHelper: evaluateSpiffeHelper(workloadLabels[LabelSpiffeHelperInject]),
 	}
 
 	// proxy-init always follows envoy-proxy
@@ -65,6 +57,30 @@ func (e *PrecedenceEvaluator) Evaluate(
 	}
 
 	return decision
+}
+
+// evaluateSpiffeHelper resolves the per-workload SPIRE-enabled flag from
+// the kagenti.io/spiffe-helper-inject label. Spiffe-helper is bundled
+// inside the combined authbridge images and gated by the SPIRE_ENABLED
+// env var rather than by feature-gate, so this skips the feature-gate
+// layer that evaluateSidecar applies.
+//
+// TODO: rename SpiffeHelper -> SpireEnabled (decision field + label)
+// once the in-pod helper truly retires; left as-is here to keep this
+// PR's blast radius contained.
+func evaluateSpiffeHelper(workloadLabelValue string) SidecarDecision {
+	if workloadLabelValue == labelValueFalse {
+		return SidecarDecision{
+			Inject: false,
+			Reason: "workload label disabled spiffe-helper",
+			Layer:  "workload-label",
+		}
+	}
+	return SidecarDecision{
+		Inject: true,
+		Reason: "all gates passed",
+		Layer:  "default",
+	}
 }
 
 // evaluateSidecar evaluates the two-layer precedence chain for a single sidecar.

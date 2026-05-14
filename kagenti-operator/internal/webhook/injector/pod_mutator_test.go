@@ -539,7 +539,7 @@ func TestInjectAuthBridge_ProxySidecarMode_InjectsCorrectly(t *testing.T) {
 		if c.Name == AuthBridgeProxyContainerName {
 			proxyFound = true
 			if c.Image != config.CompiledDefaults().Images.AuthBridge {
-				t.Errorf("proxy container image = %q, want authbridge-light", c.Image)
+				t.Errorf("proxy container image = %q, want %q", c.Image, config.CompiledDefaults().Images.AuthBridge)
 			}
 		}
 	}
