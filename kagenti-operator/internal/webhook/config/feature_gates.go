@@ -5,10 +5,10 @@ package config
 //
 // Spiffe-helper and client-registration are no longer separate-sidecar
 // features:
-//   * spiffe-helper is bundled inside the EnvoyProxy and AuthBridge
+//   - spiffe-helper is bundled inside the EnvoyProxy and AuthBridge
 //     combined images and starts conditionally on the per-workload
 //     SPIRE_ENABLED env var.
-//   * client-registration is now operator-managed entirely (the in-pod
+//   - client-registration is now operator-managed entirely (the in-pod
 //     sidecar path is gone). See operator-managed-client-registration.md.
 type FeatureGates struct {
 	GlobalEnabled bool `json:"globalEnabled" yaml:"globalEnabled"`
