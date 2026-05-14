@@ -114,7 +114,7 @@ func (a *Admin) getOrCreateAudienceClientScope(ctx context.Context, token, realm
 	if err := a.ensureAudienceMapper(ctx, token, realm, scopeID, scopeName, audience); err != nil {
 		// Mapper creation failed for a brand-new scope. This can happen if createClientScope
 		// hit a 409 race and another reconcile already created the mapper. Non-fatal —
-		// verifyAudienceMapper will repair on next pass.
+		// verifyAudienceMapper will repair below in this reconcile.
 		return scopeID, nil
 	}
 	return scopeID, nil
@@ -350,7 +350,7 @@ func (a *Admin) createAudienceMapperBestEffort(ctx context.Context, token, realm
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusCreated || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return nil
 	}
@@ -377,8 +377,7 @@ func (a *Admin) createAudienceMapperBestEffort(ctx context.Context, token, realm
 		// Ghost-409: mapper not visible. Return nil; next reconcile will retry.
 		return nil
 	}
-	// Other errors: non-fatal, reconciler retries.
-	return nil
+	return fmt.Errorf("keycloak create mapper best-effort: status %d: %s", resp.StatusCode, truncate(body, 256))
 }
 
 func (a *Admin) putAudienceMapper(ctx context.Context, token, realm, scopeID string, mapper protocolMapperRep) error {
