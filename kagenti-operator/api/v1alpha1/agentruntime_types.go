@@ -60,6 +60,30 @@ type AgentRuntimeSpec struct {
 	// Trace specifies optional per-workload observability overrides
 	// +optional
 	Trace *TraceSpec `json:"trace,omitempty"`
+
+	// AuthBridgeMode selects the deployment shape for this workload's
+	// authbridge sidecar. When unset, the namespace-level
+	// authbridge-runtime-config ConfigMap's mode is used; if that is
+	// also unset, the operator falls back to "proxy-sidecar".
+	//
+	// Three valid values:
+	//
+	//   proxy-sidecar  HTTP_PROXY env + lightweight authbridge-proxy
+	//                  + spiffe-helper bundled. No Envoy, no iptables.
+	//                  Default mode.
+	//   envoy-sidecar  Envoy + ext_proc authbridge + spiffe-helper
+	//                  bundled. Requires the proxy-init iptables
+	//                  container.
+	//   waypoint       Standalone deployment, not injected as a
+	//                  sidecar. Used by Istio ambient mesh.
+	//
+	// Set this when a single workload needs a different shape than the
+	// namespace default. Most deployments leave it unset and let the
+	// namespace ConfigMap drive the choice.
+	//
+	// +optional
+	// +kubebuilder:validation:Enum=proxy-sidecar;envoy-sidecar;waypoint
+	AuthBridgeMode string `json:"authBridgeMode,omitempty"`
 }
 
 // IdentitySpec configures workload identity for an AgentRuntime.

@@ -11,14 +11,13 @@ const (
 	LabelClientRegistrationInject = "kagenti.io/client-registration-inject"
 )
 
-// AuthBridge deployment mode annotation.
-// Controls which image variant and injection pattern is used.
+// AuthBridge deployment modes. Selected per workload via AgentRuntime
+// CR `Spec.AuthBridgeMode`, falling back to the namespace
+// `authbridge-runtime-config` ConfigMap's `mode` field, then to
+// ModeProxySidecar as the cluster-wide default.
 const (
-	AnnotationAuthBridgeMode = "kagenti.io/authbridge-mode"
-
-	// Mode values
-	ModeEnvoySidecar = "envoy-sidecar" // default: iptables + Envoy + ext_proc
-	ModeProxySidecar = "proxy-sidecar" // HTTP_PROXY env + lightweight authbridge
+	ModeEnvoySidecar = "envoy-sidecar" // iptables + Envoy + ext_proc
+	ModeProxySidecar = "proxy-sidecar" // default: HTTP_PROXY env + authbridge proxy
 	ModeWaypoint     = "waypoint"      // standalone deployment (not injected)
 
 	// Container name for proxy-sidecar mode
