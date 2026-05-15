@@ -722,6 +722,40 @@ func TestInjectAuthBridge_LiteMode_FromNamespaceConfigMap(t *testing.T) {
 	}
 }
 
+func TestInjectAuthBridge_ModeResolution_UnrecognizedFallsBackToProxySidecar(t *testing.T) {
+	// A typo in the namespace ConfigMap (e.g. "proxy-sidecart") should
+	// not silently flow through to the envoy-sidecar branch. The
+	// resolution chain validates the resolved value and falls back to
+	// proxy-sidecar with a WARN log.
+	m := newTestMutator(
+		newAgentRuntime("team1", "my-agent"),
+		authbridgeRuntimeConfigMap("team1", "proxy-sidecart"),
+	)
+	ctx := context.Background()
+
+	podSpec := &corev1.PodSpec{
+		ServiceAccountName: "my-agent",
+		Containers:         []corev1.Container{{Name: "agent", Image: "my-agent:latest"}},
+	}
+	labels := map[string]string{KagentiTypeLabel: KagentiTypeAgent}
+
+	mutated, err := m.InjectAuthBridge(ctx, podSpec, "team1", "my-agent", labels, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !mutated {
+		t.Fatal("expected mutation despite unrecognized mode")
+	}
+
+	// Should land on proxy-sidecar (the safe fallback), not envoy-sidecar.
+	if !containerExists(podSpec.Containers, AuthBridgeProxyContainerName) {
+		t.Errorf("expected %s container (typo should fall back to proxy-sidecar)", AuthBridgeProxyContainerName)
+	}
+	if containerExists(podSpec.Containers, EnvoyProxyContainerName) {
+		t.Error("unexpected envoy-proxy container — typo should not silently route to envoy-sidecar")
+	}
+}
+
 func TestInjectAuthBridge_WaypointMode_SkipsInjection(t *testing.T) {
 	m := newTestMutator(newAgentRuntimeWithMode("team1", "my-agent", ModeWaypoint))
 	ctx := context.Background()

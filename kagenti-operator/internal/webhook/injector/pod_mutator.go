@@ -288,6 +288,23 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		authBridgeMode = ModeProxySidecar
 		modeSource = "cluster-default"
 	}
+	// Validate the resolved value. The CRD path is enum-checked by the
+	// API server, but the namespace ConfigMap and the deprecated
+	// annotation accept arbitrary strings — a typo (e.g.
+	// "proxy-sidecart") would otherwise flow through to the
+	// envoy-sidecar branch silently. Fall back to the cluster default
+	// and log a warning so operators can spot the typo. Per PR #361
+	// review feedback.
+	switch authBridgeMode {
+	case ModeProxySidecar, ModeEnvoySidecar, ModeLite, ModeWaypoint:
+		// recognized, keep as-is
+	default:
+		mutatorLog.Info("WARN: unrecognized authBridgeMode; defaulting to proxy-sidecar",
+			"namespace", namespace, "crName", crName,
+			"unrecognized", authBridgeMode, "source", modeSource)
+		authBridgeMode = ModeProxySidecar
+		modeSource = "cluster-default-invalid-fallback"
+	}
 	mutatorLog.Info("resolved authbridge mode",
 		"namespace", namespace, "crName", crName,
 		"mode", authBridgeMode, "source", modeSource)

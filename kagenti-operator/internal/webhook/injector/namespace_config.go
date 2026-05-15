@@ -151,6 +151,12 @@ func ExtractMode(authbridgeYAML string) string {
 		Mode string `json:"mode"`
 	}
 	if err := yaml.Unmarshal([]byte(authbridgeYAML), &top); err != nil {
+		// Fail-safe: empty string lets the resolution chain fall through
+		// to the next layer. Log a warning so operators can spot a
+		// malformed authbridge-runtime-config — silent failure here was
+		// flagged in PR #361 review.
+		nsConfigLog.Info("WARN: failed to parse authbridge-runtime-config config.yaml; falling back to next resolution layer",
+			"error", err.Error())
 		return ""
 	}
 	return top.Mode
