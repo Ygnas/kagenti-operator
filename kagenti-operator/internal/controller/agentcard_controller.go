@@ -349,9 +349,11 @@ func (r *AgentCardReconciler) fetchCardData(
 		}
 		agentCardLogger.Info("TLS port not found on service, falling back to HTTP fetch",
 			"service", workload.ServiceName, "expectedPortName", AgentTLSPortName)
-		r.Recorder.Event(agentCard, corev1.EventTypeWarning, "FallbackToHTTP",
-			fmt.Sprintf("Service %s has no %s port; fetch is unverified",
-				workload.ServiceName, AgentTLSPortName))
+		if r.Recorder != nil {
+			r.Recorder.Event(agentCard, corev1.EventTypeWarning, "FallbackToHTTP",
+				fmt.Sprintf("Service %s has no %s port; fetch is unverified",
+					workload.ServiceName, AgentTLSPortName))
+		}
 		cardData, err := r.AgentFetcher.Fetch(
 			ctx, protocol, serviceURL, workload.ServiceName, agentCard.Namespace)
 		if err != nil {
@@ -377,7 +379,9 @@ func (r *AgentCardReconciler) fetchCardData(
 		}
 		return nil, nil, err
 	}
-	r.cleanupVerifiedFetchFields(ctx, agentCard)
+	if err := r.cleanupVerifiedFetchFields(ctx, agentCard); err != nil {
+		agentCardLogger.Error(err, "Failed to cleanup verified fetch fields", "agentCard", agentCard.Name)
+	}
 	return cardData, nil, nil
 }
 
@@ -1057,23 +1061,22 @@ func (r *AgentCardReconciler) propagateVerifiedLabel(
 }
 
 // cleanupVerifiedFetchFields removes stale Phase 1 fields when verifiedFetch is disabled.
-func (r *AgentCardReconciler) cleanupVerifiedFetchFields(ctx context.Context, agentCard *agentv1alpha1.AgentCard) {
+func (r *AgentCardReconciler) cleanupVerifiedFetchFields(ctx context.Context, agentCard *agentv1alpha1.AgentCard) error {
 	latest := &agentv1alpha1.AgentCard{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name:      agentCard.Name,
 		Namespace: agentCard.Namespace,
 	}, latest); err != nil {
-		agentCardLogger.Error(err, "Failed to get AgentCard for cleanup", "agentCard", agentCard.Name)
-		return
+		return err
 	}
 
 	verifiedCond := meta.FindStatusCondition(latest.Status.Conditions, ConditionVerified)
 	needsUpdate := verifiedCond != nil || latest.Status.AttestedAgentSpiffeID != ""
 	if !needsUpdate {
-		return
+		return nil
 	}
 
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, types.NamespacedName{
 			Name:      agentCard.Name,
 			Namespace: agentCard.Namespace,
@@ -1083,9 +1086,7 @@ func (r *AgentCardReconciler) cleanupVerifiedFetchFields(ctx context.Context, ag
 		meta.RemoveStatusCondition(&latest.Status.Conditions, ConditionVerified)
 		latest.Status.AttestedAgentSpiffeID = ""
 		return r.Status().Update(ctx, latest)
-	}); err != nil {
-		agentCardLogger.Error(err, "Failed to cleanup verified fetch fields", "agentCard", agentCard.Name)
-	}
+	})
 }
 
 func (r *AgentCardReconciler) handleDeletion(ctx context.Context, agentCard *agentv1alpha1.AgentCard) (ctrl.Result, error) {
