@@ -601,7 +601,6 @@ data:
     clientRegistration: true
     injectTools: false
     perWorkloadConfigResolution: false
-    combinedSidecar: false
     skillImageVolumes: true
 `)
 	if _, err := Run(cmd); err != nil {
@@ -643,7 +642,6 @@ data:
     clientRegistration: true
     injectTools: false
     perWorkloadConfigResolution: false
-    combinedSidecar: false
     skillImageVolumes: false
 `)
 	if _, err := Run(cmd); err != nil {

@@ -355,6 +355,34 @@ func TestValidateSkills(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+
+	t.Run("path traversal rejected", func(t *testing.T) {
+		skills := []agentv1alpha1.SkillImageRef{
+			{Name: "evil", Image: "img:v1", MountPath: "/agent/skills/../../etc/passwd"},
+		}
+		err := validateSkills(skills)
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+		if !strings.Contains(err.Error(), "path traversal") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("protected path rejected", func(t *testing.T) {
+		for _, path := range []string{"/proc/self", "/sys/fs", "/dev/null", "/var/run/secrets/kubernetes.io/serviceaccount"} {
+			skills := []agentv1alpha1.SkillImageRef{
+				{Name: "bad-mount", Image: "img:v1", MountPath: path},
+			}
+			err := validateSkills(skills)
+			if err == nil {
+				t.Fatalf("expected error for protected path %q", path)
+			}
+			if !strings.Contains(err.Error(), "protected path") {
+				t.Errorf("unexpected error message for %q: %v", path, err)
+			}
+		}
+	})
 }
 
 func TestValidateSkills_CreateIntegration(t *testing.T) {

@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	agentv1alpha1 "github.com/kagenti/operator/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -141,6 +142,8 @@ func (v *AgentRuntimeValidator) checkDuplicateTargetRef(ctx context.Context, rt 
 	return nil
 }
 
+var deniedMountPrefixes = []string{"/proc", "/sys", "/dev", "/var/run/secrets"}
+
 func validateSkills(skills []agentv1alpha1.SkillImageRef) error {
 	if len(skills) == 0 {
 		return nil
@@ -158,6 +161,15 @@ func validateSkills(skills []agentv1alpha1.SkillImageRef) error {
 			return fmt.Errorf("spec.skills[%d]: duplicate mountPath %q", i, skill.MountPath)
 		}
 		seenPaths[skill.MountPath] = true
+
+		if strings.Contains(skill.MountPath, "..") {
+			return fmt.Errorf("spec.skills[%d]: mountPath %q must not contain path traversal (..)", i, skill.MountPath)
+		}
+		for _, prefix := range deniedMountPrefixes {
+			if strings.HasPrefix(skill.MountPath, prefix) {
+				return fmt.Errorf("spec.skills[%d]: mountPath %q overlaps protected path %q", i, skill.MountPath, prefix)
+			}
+		}
 	}
 	return nil
 }

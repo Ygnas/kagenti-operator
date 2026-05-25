@@ -354,7 +354,10 @@ func (r *AgentRuntimeReconciler) applyWorkloadConfig(ctx context.Context, rt *ag
 			for _, s := range rt.Spec.Skills {
 				names = append(names, s.Name)
 			}
-			b, _ := json.Marshal(names)
+			b, err := json.Marshal(names)
+			if err != nil {
+				logger.Error(err, "failed to marshal skill names")
+			}
 			workloadAnnotations[AnnotationSkills] = string(b)
 		} else {
 			delete(workloadAnnotations, AnnotationSkills)
