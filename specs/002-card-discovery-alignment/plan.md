@@ -5,7 +5,7 @@
 
 ## Summary
 
-Align the card discovery implementation (merged in PR #372) with the community refinement document. Six changes: add `transportSecurity` field, rename condition type `CardSynced` to `CardFetched` with transport-aware reasons, rename `cardId` to `cardHash` and `fetchedAt` to `lastCardFetchTime`, implement protocol-aware port resolution with annotation override, and add workload readiness check. All changes are breaking but acceptable since the API has no external consumers yet.
+Improve the card discovery API surface (merged in PR #372) based on findings from live cluster testing and API review: add transport security visibility, fix misleading field names, align condition model with Kubernetes conventions, and add protocol-aware port resolution. Six changes: add `transportSecurity` field, rename condition type `CardSynced` to `CardFetched` with transport-aware reasons, rename `cardId` to `cardHash` and `fetchedAt` to `lastCardFetchTime`, implement protocol-aware port resolution with annotation override, and add workload readiness check. All changes are breaking but acceptable since the API has no external consumers yet.
 
 ## Technical Context
 

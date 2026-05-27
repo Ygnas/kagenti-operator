@@ -11,7 +11,7 @@
 
 A platform engineer queries an AgentRuntime to understand how the agent's card was fetched and whether the transport layer provided identity verification. Today, `CardSynced=True` gives no indication whether the fetch used mTLS (transport-verified identity) or plain HTTP (no identity guarantee). The engineer must dig into operator logs to determine the security posture.
 
-**Why this priority**: Transport security is the core value proposition of the refinement doc's design. Without this visibility, platform engineers cannot assess whether their agent discovery pipeline meets security requirements. A card fetched over plain HTTP in a multi-tenant cluster could be served by a compromised pod.
+**Why this priority**: Transport security visibility is the highest-value gap in the current API. Without this visibility, platform engineers cannot assess whether their agent discovery pipeline meets security requirements. A card fetched over plain HTTP in a multi-tenant cluster could be served by a compromised pod.
 
 **Independent Test**: Deploy an agent with and without SPIRE configured. Check `status.card.transportSecurity` and the `CardFetched` condition reason. Verify the values correctly reflect the transport used.
 

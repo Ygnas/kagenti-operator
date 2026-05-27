@@ -4,7 +4,7 @@
 
 ## Why This Change
 
-PR #372 merged the card discovery feature (fetching A2A agent cards into AgentRuntime status). The implementation diverges from the community refinement document on naming, condition semantics, and transport security visibility. Since the PR just merged and no external consumers exist yet, we have a narrow window to align the API before the field names and condition types become locked. A live cluster test also revealed that platform engineers cannot tell whether a card was fetched securely (mTLS) or over plain HTTP without reading operator logs.
+PR #372 merged the card discovery feature (fetching A2A agent cards into AgentRuntime status). Live cluster testing exposed three API quality issues: (1) platform engineers cannot tell whether a card was fetched securely (mTLS) or over plain HTTP without reading operator logs, (2) the condition model has a naming stutter (`CardSynced True CardSynced` in kubectl output) and conflates unrelated failure modes, and (3) field names are misleading (`cardId` holds a content hash, not an identifier). Since the PR just merged and no external consumers exist yet, we have a narrow window to fix these before the API surface becomes locked.
 
 ## What Changes
 
@@ -48,11 +48,11 @@ The changes modify four layers:
 
 1. **`transportSecurity` as a field, not just a condition reason.** Condition reasons are transient (lost on the next status transition). A field persists with the card data, letting consumers (UI, policy engines) query it directly. The condition reason also reflects transport for `kubectl describe` visibility.
 
-2. **Merged condition model from both designs.** Neither the refinement doc's model nor the PR #372 model was complete. The merged model takes `CardFetched` type and transport-aware reasons from the doc, plus `FetchSkipped` and `DiscoveryDisabled` from the implementation. Dropped `FetchPending` (no actionable signal in a non-polling architecture).
+2. **Condition model where every reason maps to one diagnostic action.** `CardFetched` as the type (past participle, like Kubernetes' `Scheduled` or `Initialized`) instead of `CardSynced` (implies polling, which we don't do). Transport-aware reasons (`Fetched` vs `FetchedInsecure`) for security visibility. `WorkloadNotReady` split from `ServiceNotFound` because they require different operator responses (wait vs check config). `FetchSkipped` and `DiscoveryDisabled` retained from PR #372 for feature flag and no-op cases.
 
 3. **Port resolution with annotation escape hatch.** The `kagenti.io/port` annotation on Services handles multi-port edge cases where auto-detection picks the wrong port. The `a2a` port name takes priority over generic `http` because we're specifically fetching A2A protocol cards.
 
-4. **`cardHash` over `cardId`.** The field holds a SHA-256 content hash for change detection, not an identifier. `cardId` was misleading; `cardHash` matches the refinement doc and accurately describes the field's purpose.
+4. **`cardHash` over `cardId`.** The field holds a SHA-256 content hash for change detection, not a unique identifier. `cardId` suggests a stable ID (like a UUID); `cardHash` accurately conveys "content fingerprint that changes when the card changes."
 
 5. **Workload readiness check before service resolution.** Distinguishes "pods aren't ready yet" (transient, wait) from "no matching Service" (configuration issue, fix it). Different diagnostic actions for the operator.
 
@@ -67,7 +67,7 @@ The changes modify four layers:
 ## Open Questions
 
 1. Should `transportSecurity` values be documented as a formal enum in the CRD description, or left as free-form strings for extensibility (e.g., future `"ztunnel"` value)?
-2. Pending feedback from the refinement document author on whether to align the implementation with the doc or update the doc to match. This PR assumes alignment with the doc is the direction.
+2. Are there any downstream consumers already parsing `cardId` or `CardSynced` that we're not aware of? If so, the breaking window may be shorter than assumed.
 
 ## Review Checklist
 
