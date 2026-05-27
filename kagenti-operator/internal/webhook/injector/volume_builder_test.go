@@ -18,6 +18,8 @@ package injector
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestBuildResolvedVolumes_SpireDisabled(t *testing.T) {
@@ -140,4 +142,79 @@ func TestOverrideAuthBridgeConfigMapInVolumes(t *testing.T) {
 		}
 	}
 	t.Fatal("authbridge-runtime-config volume not found in overridden volumes")
+}
+
+// TestOverrideEnvoyConfigMapInVolumes locks the contract used by the
+// envoy-sidecar mtls path: when a per-agent envoy-config CM has been
+// rendered, the volume reference at the EnvoyConfigMapName slot must
+// be redirected to it without mutating the input slice or touching
+// any other volume.
+func TestOverrideEnvoyConfigMapInVolumes(t *testing.T) {
+	tests := []struct {
+		name    string
+		volumes func() []corev1.Volume
+		newCM   string
+		// found: true means the function should locate the envoy-config
+		// volume and update it; false means the input has no such
+		// volume and the result must equal the input element-for-element.
+		found bool
+	}{
+		{
+			name: "volume found, name swapped",
+			volumes: func() []corev1.Volume {
+				return BuildRequiredVolumes()
+			},
+			newCM: "envoy-config-my-agent",
+			found: true,
+		},
+		{
+			name: "no envoy-config volume, list unchanged",
+			volumes: func() []corev1.Volume {
+				return []corev1.Volume{{
+					Name:         "shared-data",
+					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				}}
+			},
+			newCM: "envoy-config-my-agent",
+			found: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := tt.volumes()
+			overridden := overrideEnvoyConfigMapInVolumes(original, tt.newCM)
+
+			// Original must not be mutated regardless of branch.
+			for _, v := range original {
+				if v.Name == EnvoyConfigMapName && v.ConfigMap != nil {
+					if v.ConfigMap.Name != EnvoyConfigMapName {
+						t.Errorf("original was mutated: got %q", v.ConfigMap.Name)
+					}
+				}
+			}
+
+			// Output length matches input length (no add/drop).
+			if len(overridden) != len(original) {
+				t.Fatalf("overridden length = %d, want %d", len(overridden), len(original))
+			}
+
+			// Find-and-swap behavior.
+			swappedFound := false
+			for _, v := range overridden {
+				if v.Name == EnvoyConfigMapName && v.ConfigMap != nil {
+					swappedFound = true
+					if v.ConfigMap.Name != tt.newCM {
+						t.Errorf("envoy-config CM name = %q, want %q", v.ConfigMap.Name, tt.newCM)
+					}
+				}
+			}
+			if tt.found && !swappedFound {
+				t.Fatal("expected envoy-config volume in overridden but didn't find it")
+			}
+			if !tt.found && swappedFound {
+				t.Fatal("envoy-config volume should not have been added")
+			}
+		})
+	}
 }

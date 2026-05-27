@@ -570,16 +570,36 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	// authbridge + bundled spiffe-helper. proxy-init is a separate
 	// init container. spiffe-helper starts conditionally on SPIRE_ENABLED.
 
-	// envoy-sidecar always passes mtlsMode="" — the validating webhook
-	// rejects mtlsMode != disabled with envoy-sidecar at admission, so
-	// we'd never reach this branch with a non-empty mtlsMode in practice;
-	// passing "" here is the explicit-defense complement.
+	// envoy-sidecar threads the resolved mtlsMode through to the per-agent
+	// authbridge-config CM (so the Provider's spiffe block + any future
+	// authbridge-side mTLS knobs reflect the CR's posture) AND renders a
+	// per-agent envoy-config CM with the matching TLS blocks. The envoy
+	// data plane terminates the actual TLS — DownstreamTlsContext on the
+	// inbound listener (gated on MTLSEnabled) and UpstreamTlsContext on
+	// original_destination_tls (strict only).
 	perAgentCMName, err := m.ensurePerAgentConfigMap(ctx, namespace, crName,
-		ModeEnvoySidecar, nsConfig.AuthBridgeRuntimeYAML, nsConfig, nil, "", allowedAudiences)
+		ModeEnvoySidecar, nsConfig.AuthBridgeRuntimeYAML, nsConfig, nil, mtlsMode, allowedAudiences)
 	if err != nil {
 		return false, fmt.Errorf("envoy-sidecar per-agent ConfigMap: %w", err)
 	}
 	requiredVolumes = overrideAuthBridgeConfigMapInVolumes(requiredVolumes, perAgentCMName)
+
+	// When mtlsMode is non-disabled, render a per-agent envoy-config CM
+	// so the workload's Envoy data plane carries the right TLS blocks.
+	// disabled stays on the namespace-level envoy-config (today's
+	// behavior, no per-agent CM churn).
+	if mtlsMode != MTLSModeDisabled {
+		// ResolveConfig is cheap/idempotent; we clear EnvoyYAML so
+		// RenderEnvoyConfig uses the template path (with mtls TLS
+		// blocks) instead of short-circuiting on the namespace CM.
+		resolvedForEnvoy := ResolveConfig(currentConfig, nsConfig, arOverrides)
+		resolvedForEnvoy.EnvoyYAML = ""
+		envoyCMName, err := m.ensurePerAgentEnvoyConfigMap(ctx, namespace, crName, resolvedForEnvoy)
+		if err != nil {
+			return false, fmt.Errorf("envoy-sidecar per-agent envoy ConfigMap: %w", err)
+		}
+		requiredVolumes = overrideEnvoyConfigMapInVolumes(requiredVolumes, envoyCMName)
+	}
 
 	if decision.EnvoyProxy.Inject && !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
 		podSpec.Containers = append(podSpec.Containers, builder.BuildEnvoyProxyContainerWithSpireOption(spireEnabled))
@@ -665,6 +685,15 @@ func (m *PodMutator) apiReader() client.Reader {
 // perAgentConfigMapName returns the ConfigMap name for a specific agent's authbridge config.
 func perAgentConfigMapName(crName string) string {
 	return "authbridge-config-" + crName
+}
+
+// perAgentEnvoyConfigMapName returns the ConfigMap name for a
+// specific agent's rendered Envoy YAML. Envoy-sidecar workloads with
+// a non-disabled mtlsMode get a per-agent envoy-config CM so the TLS
+// blocks vary per workload; without mTLS the namespace-level
+// `envoy-config` is reused.
+func perAgentEnvoyConfigMapName(crName string) string {
+	return "envoy-config-" + crName
 }
 
 // synthesizePipeline builds the per-plugin pipeline section that
@@ -791,11 +820,12 @@ func injectAllowedAudiences(cfg map[string]interface{}, audiences []string) {
 // If baseYAML is empty (namespace has no authbridge-runtime-config), a minimal config
 // is generated from the NamespaceConfig fields.
 //
-// mtlsMode is the resolved mTLS posture (disabled / permissive / strict). Only
-// proxy-sidecar and lite paths reach this function with a non-disabled mtlsMode;
-// the AgentRuntime validating webhook rejects mtlsMode != disabled when
-// authBridgeMode is envoy-sidecar (Envoy SDS isn't wired in the kagenti envoy-config
-// today — tracked as a follow-up).
+// mtlsMode is the resolved mTLS posture (disabled / permissive / strict).
+// All three modes (proxy-sidecar, lite, envoy-sidecar) can reach this
+// function with any mtlsMode value. proxy-sidecar / lite consume the
+// rendered `mtls:` block via the authbridge listener directly;
+// envoy-sidecar uses a parallel per-agent envoy-config CM rendered by
+// ensurePerAgentEnvoyConfigMap (Envoy terminates TLS in its data plane).
 func (m *PodMutator) ensurePerAgentConfigMap(
 	ctx context.Context,
 	namespace, crName, mode string,
@@ -898,6 +928,52 @@ func (m *PodMutator) ensurePerAgentConfigMap(
 	}
 	mutatorLog.Info("Applied per-agent ConfigMap",
 		"namespace", namespace, "name", cmName, "mode", mode, "mtlsMode", mtlsMode)
+
+	return cmName, nil
+}
+
+// ensurePerAgentEnvoyConfigMap renders an envoy.yaml from the
+// resolved config and writes it to a per-agent ConfigMap named
+// envoy-config-<crName>. Used by the envoy-sidecar mode when
+// mtlsMode != disabled so each workload's Envoy config carries the
+// TLS blocks (DownstreamTlsContext on inbound, UpstreamTlsContext on
+// the strict-only original_destination_tls cluster) derived from the
+// resolved config's MTLSMode.
+//
+// Returns the ConfigMap name on success. The caller wires the
+// returned name into the envoy-config volume reference so the
+// envoy-proxy container mounts the per-agent CM instead of the
+// namespace-level `envoy-config`.
+//
+// SSA + OwnerReference machinery mirrors ensurePerAgentConfigMap;
+// the only differences are the CM name, the data key (envoy.yaml vs
+// config.yaml), and the YAML rendering source (RenderEnvoyConfig vs
+// the per-plugin authbridge runtime config).
+func (m *PodMutator) ensurePerAgentEnvoyConfigMap(
+	ctx context.Context,
+	namespace, crName string,
+	resolved *ResolvedConfig,
+) (string, error) {
+	cmName := perAgentEnvoyConfigMapName(crName)
+
+	envoyYAML, err := RenderEnvoyConfig(resolved)
+	if err != nil {
+		return "", fmt.Errorf("rendering per-agent envoy.yaml for %s/%s: %w", namespace, crName, err)
+	}
+
+	cmApply := applyconfigscorev1.ConfigMap(cmName, namespace).
+		WithLabels(map[string]string{managedByLabel: managedByValue}).
+		WithData(map[string]string{"envoy.yaml": envoyYAML})
+
+	if ownerRef := m.buildOwnerReference(ctx, namespace, crName); ownerRef != nil {
+		cmApply = cmApply.WithOwnerReferences(ownerRef)
+	}
+
+	if err := m.Client.Apply(ctx, cmApply, client.FieldOwner("kagenti-webhook"), client.ForceOwnership); err != nil {
+		return "", fmt.Errorf("failed to apply per-agent envoy ConfigMap %s/%s: %w", namespace, cmName, err)
+	}
+	mutatorLog.Info("Applied per-agent envoy ConfigMap",
+		"namespace", namespace, "name", cmName, "mtlsMode", resolved.MTLSMode)
 
 	return cmName, nil
 }

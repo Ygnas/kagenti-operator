@@ -247,12 +247,13 @@ func TestAgentRuntimeValidator_ValidateDelete(t *testing.T) {
 
 }
 
-// TestAgentRuntimeValidator_MTLSCompatWithMode covers the rejection of
-// mtlsMode != disabled when authBridgeMode is envoy-sidecar. The kagenti
-// envoy-config doesn't currently configure SDS, so an envoy-sidecar
-// workload that sets mtlsMode would silently run plaintext while the
-// user believes they have strict mTLS — the validator catches that at
-// admission time.
+// TestAgentRuntimeValidator_MTLSCompatWithMode covers the
+// authBridgeMode + mtlsMode compatibility matrix. All combinations
+// of {proxy-sidecar, lite, envoy-sidecar} × {disabled, permissive,
+// strict} are now valid — envoy-sidecar mtls is supported via
+// per-agent envoy-config rendering with TLS blocks
+// (DownstreamTlsContext / UpstreamTlsContext). Empty authBridgeMode
+// also admits across the matrix (resolution chain picks a default).
 func TestAgentRuntimeValidator_MTLSCompatWithMode(t *testing.T) {
 	ctx := context.Background()
 
@@ -271,8 +272,12 @@ func TestAgentRuntimeValidator_MTLSCompatWithMode(t *testing.T) {
 		{"empty mode + strict allowed", "", "strict", false},
 		{"envoy-sidecar + disabled allowed", "envoy-sidecar", "disabled", false},
 		{"envoy-sidecar + empty allowed", "envoy-sidecar", "", false},
-		{"envoy-sidecar + permissive rejected", "envoy-sidecar", "permissive", true},
-		{"envoy-sidecar + strict rejected", "envoy-sidecar", "strict", true},
+		// envoy-sidecar + permissive/strict — newly supported. Locked
+		// in here so a future regression that re-introduces the gate
+		// gets caught by tests instead of breaking the user-facing
+		// Spec.MTLSMode contract.
+		{"envoy-sidecar + permissive allowed", "envoy-sidecar", "permissive", false},
+		{"envoy-sidecar + strict allowed", "envoy-sidecar", "strict", false},
 	}
 
 	for _, tt := range tests {
@@ -287,10 +292,6 @@ func TestAgentRuntimeValidator_MTLSCompatWithMode(t *testing.T) {
 			if gotErr != tt.wantErr {
 				t.Errorf("ValidateCreate(mode=%q, mtls=%q): wantErr=%v, gotErr=%v (err=%v)",
 					tt.mode, tt.mtls, tt.wantErr, gotErr, err)
-			}
-			if tt.wantErr && err != nil &&
-				!strings.Contains(err.Error(), "envoy-sidecar mTLS is tracked as a follow-up") {
-				t.Errorf("error message should point to follow-up; got: %v", err)
 			}
 		})
 

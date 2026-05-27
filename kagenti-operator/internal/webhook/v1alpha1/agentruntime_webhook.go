@@ -82,29 +82,27 @@ func (v *AgentRuntimeValidator) ValidateDelete(_ context.Context, rt *agentv1alp
 	return nil, nil
 }
 
-// checkMTLSCompatibleWithMode rejects mtlsMode != disabled when authBridgeMode
-// is envoy-sidecar. Envoy SDS isn't currently configured by the kagenti
-// envoy-config — extending it to do real mTLS is a separate piece of work.
-// Until that lands, the only modes that actually carry mTLS are
-// proxy-sidecar and lite (kagenti-extensions PR #424). Rejecting at admission
-// makes the misconfiguration loud instead of producing a workload that
-// silently runs plaintext while the user believes they have strict mTLS.
-//
-// Empty / "disabled" mtlsMode is permitted for any authBridgeMode — that's
-// today's plaintext default. The error message points to the supported
-// modes and flags this as a current limitation, not a permanent one.
+// checkMTLSCompatibleWithMode validates the mtlsMode + authBridgeMode
+// combination. Empty / "disabled" mtlsMode is permitted for any
+// authBridgeMode (today's plaintext default). All three deployment
+// shapes (proxy-sidecar, lite, envoy-sidecar) now support permissive
+// and strict — proxy-sidecar / lite via the authbridge listener,
+// envoy-sidecar via TLS blocks rendered into a per-agent
+// envoy-config ConfigMap (DownstreamTlsContext on the inbound
+// listener, UpstreamTlsContext on original_destination_tls in
+// strict). The webhook keeps this function as the central enum
+// gate so future incompatible combinations can land here without
+// scattering the check.
 func checkMTLSCompatibleWithMode(rt *agentv1alpha1.AgentRuntime) error {
-	mtls := rt.Spec.MTLSMode
-	if mtls == "" || mtls == "disabled" {
-		return nil
-	}
-	if rt.Spec.AuthBridgeMode == "envoy-sidecar" {
-		return fmt.Errorf(
-			"mtlsMode=%q is not supported with authBridgeMode=envoy-sidecar; "+
-				"set authBridgeMode to proxy-sidecar or lite (envoy-sidecar mTLS is tracked as a follow-up)",
-			mtls,
-		)
-	}
+	// TODO(future-incompatibility): re-enable cross-field rejections
+	// here when a new authBridgeMode (e.g. waypoint, sidecarless) lands
+	// that needs different mTLS semantics. Today the matrix is fully
+	// supported — CRD enum validation pins mtlsMode and authBridgeMode
+	// to their enums, and every combination is implemented. The
+	// function intentionally stays as a single grep-target for the
+	// next incompatible combination so the rejection can land here
+	// instead of getting scattered across the validator.
+	_ = rt
 	return nil
 }
 

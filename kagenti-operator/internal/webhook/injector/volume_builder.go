@@ -244,3 +244,23 @@ func overrideAuthBridgeConfigMapInVolumes(volumes []corev1.Volume, cmName string
 	}
 	return result
 }
+
+// overrideEnvoyConfigMapInVolumes returns a copy of the volume list with
+// the envoy-config volume pointing at the given ConfigMap name. Used by
+// the envoy-sidecar mTLS path: the rendered per-agent envoy.yaml lives
+// in envoy-config-<crName>, replacing the namespace-level "envoy-config"
+// for that workload's Envoy. The volume name itself stays "envoy-config"
+// (matches the container's volumeMount); only the underlying ConfigMap
+// reference changes.
+func overrideEnvoyConfigMapInVolumes(volumes []corev1.Volume, cmName string) []corev1.Volume {
+	result := make([]corev1.Volume, len(volumes))
+	copy(result, volumes)
+	for i := range result {
+		if result[i].Name == EnvoyConfigMapName && result[i].ConfigMap != nil {
+			cmCopy := *result[i].ConfigMap
+			cmCopy.Name = cmName
+			result[i].ConfigMap = &cmCopy
+		}
+	}
+	return result
+}

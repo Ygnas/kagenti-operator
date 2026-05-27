@@ -114,7 +114,15 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 			corev1.VolumeMount{
 				Name:      "svid-output",
 				MountPath: "/opt",
-				ReadOnly:  true,
+				// Must be RW: the in-process spiffe Provider mirror inside the
+				// authbridge-envoy combined image writes /opt/svid.pem,
+				// /opt/svid_key.pem, /opt/svid_bundle.pem on every SPIRE
+				// rotation. Envoy's file-based DownstreamTlsContext /
+				// UpstreamTlsContext (used when mtlsMode != disabled) reads
+				// these files. The proxy-sidecar mount in
+				// BuildProxySidecarContainerWithPorts correctly defaults to RW;
+				// this branch was historically RO from the days of an external
+				// spiffe-helper writer, which no longer applies.
 			},
 			// authbridge-envoy bundles spiffe-helper; the entrypoint reads
 			// helper.conf from this mount. Without it, the bundled

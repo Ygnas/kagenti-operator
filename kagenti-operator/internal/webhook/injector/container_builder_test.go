@@ -33,8 +33,14 @@ func TestBuildEnvoyProxyContainer_SpireEnabled_HasSvidOutputMount(t *testing.T) 
 			if vm.MountPath != "/opt" {
 				t.Errorf("svid-output mount path = %q, want /opt", vm.MountPath)
 			}
-			if !vm.ReadOnly {
-				t.Error("svid-output mount should be read-only")
+			// Must be RW: the in-process spiffe Provider mirror inside the
+			// authbridge-envoy combined image writes /opt/svid*.pem there.
+			// The previous assertion (ReadOnly required) was wrong — it was
+			// asserting the bug as the desired behavior. Envoy's file-based
+			// DownstreamTlsContext / UpstreamTlsContext (used when mtlsMode
+			// != disabled) refuses to boot if these files don't exist.
+			if vm.ReadOnly {
+				t.Error("svid-output mount must be read-write so the spiffe Provider mirror can write SVIDs")
 			}
 			break
 		}

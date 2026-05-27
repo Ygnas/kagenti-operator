@@ -53,6 +53,15 @@ type ResolvedConfig struct {
 
 	// AuthBridge runtime config — from namespace "authbridge-runtime-config" ConfigMap
 	AuthBridgeRuntimeYAML string // raw config.yaml (base for per-agent ConfigMap)
+
+	// AuthBridgeMode and MTLSMode are the resolved values from the chain
+	// CR > namespace ConfigMap > default. They're populated alongside the
+	// raw AuthBridgeRuntimeYAML so callers (e.g. RenderEnvoyConfig) can
+	// branch on the resolved values without re-parsing the YAML.
+	// AuthBridgeMode is "" when no source set it (caller picks the default).
+	// MTLSMode is "" when no source set it (caller treats as "disabled").
+	AuthBridgeMode string
+	MTLSMode       string
 }
 
 // ResolveConfig merges all three configuration layers into a single ResolvedConfig.
@@ -100,6 +109,22 @@ func ResolveConfig(platform *config.PlatformConfig, ns *NamespaceConfig, ar *Age
 		if ar.ClientRegistrationRealm != nil {
 			resolved.KeycloakRealm = *ar.ClientRegistrationRealm
 		}
+	}
+
+	// Resolve AuthBridgeMode + MTLSMode along the same CR > namespace > ""
+	// chain that pod_mutator uses. Keep this resolution local to
+	// ResolveConfig so consumers (e.g. RenderEnvoyConfig) can read the
+	// already-merged values straight off ResolvedConfig instead of
+	// re-implementing the chain.
+	if ar != nil && ar.AuthBridgeMode != nil {
+		resolved.AuthBridgeMode = *ar.AuthBridgeMode
+	} else if m := ExtractMode(resolved.AuthBridgeRuntimeYAML); m != "" {
+		resolved.AuthBridgeMode = m
+	}
+	if ar != nil && ar.MTLSMode != nil {
+		resolved.MTLSMode = *ar.MTLSMode
+	} else if m := ExtractMTLSMode(resolved.AuthBridgeRuntimeYAML); m != "" {
+		resolved.MTLSMode = m
 	}
 
 	return resolved
