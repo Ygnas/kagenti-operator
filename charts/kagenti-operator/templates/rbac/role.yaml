@@ -181,6 +181,7 @@ rules:
 - apiGroups:
   - operator.openshift.io
   resources:
+  - networks
   - zerotrustworkloadidentitymanagers
   verbs:
   - get
