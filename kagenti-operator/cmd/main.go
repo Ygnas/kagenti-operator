@@ -305,6 +305,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// ========================================
+	// Operator namespace resolution
+	// ========================================
+	controller.SetClusterDefaultsNamespace(getOperatorNamespace())
+
 	if !requireA2ASignature && !enableVerifiedFetch {
 		setupLog.Info("WARNING: Neither --require-a2a-signature nor --enable-verified-fetch is set. " +
 			"Identity binding requires at least one trust mechanism to function. " +
