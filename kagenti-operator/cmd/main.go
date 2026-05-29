@@ -280,6 +280,11 @@ func main() {
 		})
 	}
 
+	// ========================================
+	// Operator namespace resolution
+	// ========================================
+	controller.SetClusterDefaultsNamespace(getOperatorNamespace())
+
 	cmCacheNamespaces := buildConfigMapCacheNamespaces(
 		requireA2ASignature, spireTrustBundleConfigMapName, spireTrustBundleConfigMapNS,
 	)
