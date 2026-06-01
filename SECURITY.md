@@ -16,7 +16,8 @@ please report it responsibly.
 
 ### Security Contacts
 
-- Ladislav Smola ([@Ladas](https://github.com/Ladas))
+- **kagenti-maintainers@googlegroups.com**
+- **security@kagenti.io**
 
 ### What to Expect
 
