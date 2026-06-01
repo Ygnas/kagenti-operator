@@ -584,6 +584,68 @@ spec:
 	return err == nil
 }
 
+// EnableSkillDiscovery creates a feature-gates ConfigMap with
+// skillDiscovery enabled and patches the controller Deployment to mount it.
+func EnableSkillDiscovery(namespace, deploy string) error {
+	By("creating feature-gates ConfigMap with skillDiscovery enabled")
+	cmd := exec.Command("kubectl", "apply", "-f", "-", "-n", namespace)
+	cmd.Stdin = strings.NewReader(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kagenti-feature-gates
+data:
+  feature-gates.yaml: |
+    globalEnabled: true
+    envoyProxy: true
+    injectTools: false
+    perWorkloadConfigResolution: false
+    skillDiscovery: true
+`)
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed to create feature-gates ConfigMap: %w", err)
+	}
+
+	By("patching controller to mount feature-gates ConfigMap")
+	patch := `{"spec":{"template":{"spec":{` +
+		`"containers":[{"name":"manager",` +
+		`"volumeMounts":[{"name":"feature-gates","mountPath":"/etc/kagenti/feature-gates","readOnly":true}]}],` +
+		`"volumes":[{"name":"feature-gates","configMap":{"name":"kagenti-feature-gates"}}]}}}}`
+	cmd = exec.Command("kubectl", "patch", "deployment", deploy,
+		"-n", namespace,
+		"--type=strategic",
+		fmt.Sprintf("-p=%s", patch),
+	)
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed to patch controller with feature-gates volume: %w", err)
+	}
+
+	By("waiting for controller rollout after feature-gates patch")
+	return WaitForRollout(deploy, namespace, 2*time.Minute)
+}
+
+// DisableSkillDiscovery updates the feature-gates ConfigMap to disable
+// skillDiscovery. The feature gate loader's file watcher picks up changes.
+func DisableSkillDiscovery(namespace string) error {
+	By("updating feature-gates ConfigMap to disable skillDiscovery")
+	cmd := exec.Command("kubectl", "apply", "-f", "-", "-n", namespace)
+	cmd.Stdin = strings.NewReader(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kagenti-feature-gates
+data:
+  feature-gates.yaml: |
+    globalEnabled: true
+    envoyProxy: true
+    injectTools: false
+    perWorkloadConfigResolution: false
+    skillDiscovery: false
+`)
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed to update feature-gates ConfigMap: %w", err)
+	}
+	return nil
+}
+
 // UndeployController undeploys the controller-manager and uninstalls CRDs.
 func UndeployController() {
 	By("undeploying the controller-manager")
