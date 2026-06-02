@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // AudienceParams configures audience client-scope management (mirrors AuthBridge client_registration.py).
@@ -82,7 +84,10 @@ func (a *Admin) EnsureAudienceScope(ctx context.Context, token string, p Audienc
 	// not retroactively apply realm default-default-client-scopes to clients that already exist
 	// when the scope is added, and the agent's client is registered just before this call.
 	if p.AgentClientUUID != "" {
-		_ = a.putClientDefaultClientScope(ctx, token, p.Realm, p.AgentClientUUID, scopeID)
+		if err := a.putClientDefaultClientScope(ctx, token, p.Realm, p.AgentClientUUID, scopeID); err != nil {
+			log.FromContext(ctx).V(1).Info("agent client scope attach failed",
+				"clientUUID", p.AgentClientUUID, "scope", scopeName, "err", err.Error())
+		}
 	}
 	for _, plat := range p.PlatformClientIDs {
 		plat = strings.TrimSpace(plat)
