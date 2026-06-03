@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // AudienceParams configures audience client-scope management (mirrors AuthBridge client_registration.py).
@@ -25,6 +27,13 @@ type AudienceParams struct {
 	AudienceClientID     string   // OAuth clientId / SPIFFE ID used as custom audience in the mapper
 	PlatformClientIDs    []string // Keycloak clientId strings (e.g. UI client), not internal UUIDs
 	AudienceScopeEnabled bool     // when false, EnsureAudienceScope is a no-op
+
+	// AgentClientUUID is the internal Keycloak UUID of the agent's own client. When non-empty,
+	// the audience scope is explicitly attached to this client as a default-client-scope, so
+	// tokens issued via client_credentials carry the audience claim. Without this, agents
+	// registered before the realm-level default-default scope existed won't have it attached
+	// (Keycloak only auto-attaches default-defaults to newly-created clients).
+	AgentClientUUID string
 }
 
 type clientScopeListItem struct {
@@ -71,6 +80,15 @@ func (a *Admin) EnsureAudienceScope(ctx context.Context, token string, p Audienc
 		return fmt.Errorf("verify audience mapper for scope %q: %w", scopeName, err)
 	}
 	_ = a.putRealmDefaultDefaultClientScope(ctx, token, p.Realm, scopeID)
+	// Attach the audience scope to the agent's own client. Required because Keycloak does
+	// not retroactively apply realm default-default-client-scopes to clients that already exist
+	// when the scope is added, and the agent's client is registered just before this call.
+	if p.AgentClientUUID != "" {
+		if err := a.putClientDefaultClientScope(ctx, token, p.Realm, p.AgentClientUUID, scopeID); err != nil {
+			log.FromContext(ctx).V(1).Info("agent client scope attach failed",
+				"clientUUID", p.AgentClientUUID, "scope", scopeName, "err", err.Error())
+		}
+	}
 	for _, plat := range p.PlatformClientIDs {
 		plat = strings.TrimSpace(plat)
 		if plat == "" {
