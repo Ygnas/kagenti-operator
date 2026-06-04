@@ -75,7 +75,6 @@ func CompiledDefaults() *PlatformConfig {
 		Observability: ObservabilityConfig{
 			LogLevel:      "info",
 			EnableMetrics: true,
-			EnableTracing: false,
 		},
 	}
 }
