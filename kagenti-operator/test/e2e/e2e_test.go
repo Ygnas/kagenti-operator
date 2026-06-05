@@ -844,18 +844,24 @@ var _ = Describe("AgentCard E2E", Ordered, func() {
 		var origArgs []string
 
 		BeforeAll(func() {
-			By("patching controller with signature verification flags")
+			By("patching controller with signature verification flags and trust domain")
 			var err error
 			origArgs, err = utils.PatchControllerArgs(controllerNamespace, controllerDeployment, []string{
 				"--require-a2a-signature=true",
-				"--spire-trust-domain=example.org",
 				"--spire-trust-bundle-configmap=spire-bundle",
 				"--spire-trust-bundle-configmap-namespace=spire-system",
+			}, map[string]string{
+				"KAGENTI_SPIRE_TRUST_DOMAIN": "example.org",
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		AfterAll(func() {
+			By("removing KAGENTI_SPIRE_TRUST_DOMAIN env var")
+			cmd := exec.Command("kubectl", "set", "env", "deployment/"+controllerDeployment,
+				"-n", controllerNamespace, "KAGENTI_SPIRE_TRUST_DOMAIN-")
+			_, _ = utils.Run(cmd)
+
 			By("restoring original controller args")
 			if origArgs != nil {
 				err := utils.RestoreControllerArgs(controllerNamespace, controllerDeployment, origArgs)
@@ -865,7 +871,7 @@ var _ = Describe("AgentCard E2E", Ordered, func() {
 				currentArgs, readErr := utils.KubectlGetJsonpath("deployment", controllerDeployment,
 					controllerNamespace, "{.spec.template.spec.containers[0].args}")
 				Expect(readErr).NotTo(HaveOccurred())
-				for _, arg := range []string{"--require-a2a-signature", "--spire-trust-domain"} {
+				for _, arg := range []string{"--require-a2a-signature"} {
 					Expect(currentArgs).NotTo(ContainSubstring(arg),
 						"controller args not fully restored: still contains "+arg)
 				}
@@ -880,7 +886,7 @@ var _ = Describe("AgentCard E2E", Ordered, func() {
 				var err error
 				auditOrigArgs, err = utils.PatchControllerArgs(controllerNamespace, controllerDeployment, []string{
 					"--signature-audit-mode=true",
-				})
+				}, nil)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -1508,12 +1514,12 @@ rules:
 			g.Expect(output).NotTo(BeEmpty(), "webhook endpoint not yet populated")
 		}, 2*time.Minute, 2*time.Second).Should(Succeed())
 
-		By("patching controller with --spire-trust-domain=example.org")
-		var err error
-		origArgs, err = utils.PatchControllerArgs(controllerNamespace, controllerDeployment, []string{
-			"--spire-trust-domain=example.org",
-		})
+		By("setting KAGENTI_SPIRE_TRUST_DOMAIN env var")
+		envCmd := exec.Command("kubectl", "set", "env", "deployment/"+controllerDeployment,
+			"-n", controllerNamespace, "KAGENTI_SPIRE_TRUST_DOMAIN=example.org")
+		_, err := utils.Run(envCmd)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(utils.WaitForRollout(controllerDeployment, controllerNamespace, 2*time.Minute)).To(Succeed())
 
 		By("creating combined test namespace")
 		cmd := exec.Command("kubectl", "create", "ns", combinedTestNamespace)
@@ -1564,6 +1570,11 @@ rules:
 	})
 
 	AfterAll(func() {
+		By("removing KAGENTI_SPIRE_TRUST_DOMAIN env var")
+		envCmd := exec.Command("kubectl", "set", "env", "deployment/"+controllerDeployment,
+			"-n", controllerNamespace, "KAGENTI_SPIRE_TRUST_DOMAIN-")
+		_, _ = utils.Run(envCmd)
+
 		By("restoring original controller args")
 		if origArgs != nil {
 			err := utils.RestoreControllerArgs(controllerNamespace, controllerDeployment, origArgs)
