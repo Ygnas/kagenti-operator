@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -486,6 +487,14 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AgentCardSync")
 		os.Exit(1)
+	}
+
+	if controller.NetworkOperatorCRDExists(mgr.GetConfig()) {
+		if warning := controller.CheckOVNNetworkConfig(context.Background(), mgr.GetAPIReader()); warning != "" {
+			setupLog.Error(fmt.Errorf("OVN network misconfiguration"), warning)
+		} else {
+			setupLog.Info("OVN-Kubernetes routingViaHost is correctly configured")
+		}
 	}
 
 	artReconciler := &controller.AgentRuntimeReconciler{
