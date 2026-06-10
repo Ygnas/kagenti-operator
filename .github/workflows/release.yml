@@ -94,7 +94,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install yq
-      uses: mikefarah/yq@751d8ad57b84f1794661bc70c0afb92a22ad7b3c  # v4
+      uses: mikefarah/yq@1b9b4ac5187171d2e5e3129be0cfa827c7f9d53d  # v4
 
     - name: Log in to ghcr.io
       uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
