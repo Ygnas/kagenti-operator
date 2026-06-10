@@ -248,17 +248,9 @@ func (r *AgentRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 6.5. Discover linked skills from workload annotation (set by kagenti backend or user)
 	fg := r.getFeatureGates()
+	var linkedSkills []string
 	if fg.SkillDiscovery {
-		rt.Status.LinkedSkills = r.readLinkedSkills(ctx, rt)
-		if len(rt.Status.LinkedSkills) > 0 {
-			r.setCondition(rt, ConditionTypeSkillsDiscovered, metav1.ConditionTrue, "SkillsFound",
-				fmt.Sprintf("%d linked skill(s) discovered from workload annotation", len(rt.Status.LinkedSkills)))
-		} else {
-			meta.RemoveStatusCondition(&rt.Status.Conditions, ConditionTypeSkillsDiscovered)
-		}
-	} else {
-		rt.Status.LinkedSkills = nil
-		meta.RemoveStatusCondition(&rt.Status.Conditions, ConditionTypeSkillsDiscovered)
+		linkedSkills = r.readLinkedSkills(ctx, rt)
 	}
 
 	// 7. Count configured pods
@@ -267,12 +259,29 @@ func (r *AgentRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.V(1).Info("Failed to count configured pods", "error", err)
 	}
 
-	// 8. Update status
-	rt.Status.ConfiguredPods = configuredPods
-	r.setPhase(rt, agentv1alpha1.RuntimePhaseActive)
-	r.setCondition(rt, ConditionTypeReady, metav1.ConditionTrue, "Configured",
-		fmt.Sprintf("Workload %s configured with config-hash %s", rt.Spec.TargetRef.Name, configResult.Hash[:12]))
-	if err := r.Status().Update(ctx, rt); err != nil {
+	// 8. Update status (retry on conflict to avoid losing linkedSkills updates)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Get(ctx, req.NamespacedName, rt); err != nil {
+			return err
+		}
+		rt.Status.ConfiguredPods = configuredPods
+		r.setPhase(rt, agentv1alpha1.RuntimePhaseActive)
+		r.setCondition(rt, ConditionTypeReady, metav1.ConditionTrue, "Configured",
+			fmt.Sprintf("Workload %s configured with config-hash %s", rt.Spec.TargetRef.Name, configResult.Hash[:12]))
+		if fg.SkillDiscovery {
+			rt.Status.LinkedSkills = linkedSkills
+			if len(linkedSkills) > 0 {
+				r.setCondition(rt, ConditionTypeSkillsDiscovered, metav1.ConditionTrue, "SkillsFound",
+					fmt.Sprintf("%d linked skill(s) discovered from workload annotation", len(linkedSkills)))
+			} else {
+				meta.RemoveStatusCondition(&rt.Status.Conditions, ConditionTypeSkillsDiscovered)
+			}
+		} else {
+			rt.Status.LinkedSkills = nil
+			meta.RemoveStatusCondition(&rt.Status.Conditions, ConditionTypeSkillsDiscovered)
+		}
+		return r.Status().Update(ctx, rt)
+	}); err != nil {
 		logger.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
