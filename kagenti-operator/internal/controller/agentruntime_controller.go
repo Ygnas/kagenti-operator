@@ -719,10 +719,6 @@ func (r *AgentRuntimeReconciler) handleDeletion(ctx context.Context, rt *agentv1
 			delete(workloadLabels, LabelManagedBy)
 			acc.obj.SetLabels(workloadLabels)
 
-			// Remove skills annotation from workload metadata.
-			workloadAnnotations := acc.obj.GetAnnotations()
-			delete(workloadAnnotations, AnnotationSkills)
-			acc.obj.SetAnnotations(workloadAnnotations)
 
 			// Remove kagenti.io/type from PodTemplateSpec pod labels so future pods
 			// are not presented to the webhook with the type label.
