@@ -532,7 +532,7 @@ func main() {
 		if err = (&controller.MLflowReconciler{
 			Client:       mgr.GetClient(),
 			Scheme:       mgr.GetScheme(),
-			Recorder:     mgr.GetEventRecorderFor("mlflow-controller"),
+			Recorder:     mgr.GetEventRecorderFor("mlflow-controller"), //nolint:staticcheck
 			MLflowCAFile: mlflowCAFile,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "MLflow")
