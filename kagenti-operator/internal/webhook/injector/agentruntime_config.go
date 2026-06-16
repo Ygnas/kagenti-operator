@@ -59,6 +59,12 @@ type AgentRuntimeOverrides struct {
 	// authbridge-runtime-config mtls.mode (if set) or "permissive"
 	// applies.
 	MTLSMode *string
+
+	// Egress enforcement — from .spec.egressEnforcement
+	// Nil = no per-workload override; the namespace's
+	// authbridge-runtime-config egressEnforcement (if set) or
+	// "enforce-redirect" (default) applies.
+	EgressEnforcement *string
 }
 
 // ReadAgentRuntimeOverrides reads the AgentRuntime CR for a given workload
@@ -125,11 +131,18 @@ func extractOverrides(rt *agentv1alpha1.AgentRuntime) *AgentRuntimeOverrides {
 		overrides.MTLSMode = &mode
 	}
 
+	// .spec.egressEnforcement
+	if rt.Spec.EgressEnforcement != "" {
+		ee := rt.Spec.EgressEnforcement
+		overrides.EgressEnforcement = &ee
+	}
+
 	arConfigLog.Info("AgentRuntime overrides extracted",
 		"hasSpiffeTrustDomain", overrides.SpiffeTrustDomain != nil,
 		"hasClientRegistration", overrides.ClientRegistrationProvider != nil,
 		"hasAuthBridgeMode", overrides.AuthBridgeMode != nil,
-		"hasMTLSMode", overrides.MTLSMode != nil)
+		"hasMTLSMode", overrides.MTLSMode != nil,
+		"hasEgressEnforcement", overrides.EgressEnforcement != nil)
 
 	return overrides
 }
