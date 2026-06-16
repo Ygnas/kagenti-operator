@@ -1,0 +1,138 @@
+# Sync authbridge/ from kagenti/kagenti-extensions.
+#
+# Manually triggered. Clones the upstream repo, copies only the
+# authbridge/ subdirectory via rsync, and opens a PR if there are changes.
+
+name: Sync AuthBridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Branch to sync from in kagenti/kagenti-extensions"
+        required: false
+        default: "main"
+      upstream_commit:
+        description: "Specific upstream commit SHA to sync to (leave empty for latest)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync authbridge from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Clone upstream (sparse — authbridge/ only)
+        run: |
+          COMMIT="${{ inputs.upstream_commit }}"
+
+          if [ -n "${COMMIT}" ]; then
+            # Specific commit requested — need full history to checkout that SHA
+            git clone --filter=blob:none --sparse \
+              https://github.com/kagenti/kagenti-extensions.git \
+              /tmp/kagenti-extensions
+            cd /tmp/kagenti-extensions
+            git sparse-checkout set authbridge
+            git checkout "${COMMIT}"
+          else
+            # Latest from branch
+            git clone --depth 1 --filter=blob:none --sparse \
+              --branch "${{ inputs.source_branch }}" \
+              https://github.com/kagenti/kagenti-extensions.git \
+              /tmp/kagenti-extensions
+            cd /tmp/kagenti-extensions
+            git sparse-checkout set authbridge
+          fi
+
+          echo "UPSTREAM_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "UPSTREAM_SHA_FULL=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Sync authbridge directory
+        run: |
+          rsync -a --delete \
+            /tmp/kagenti-extensions/authbridge/ \
+            authbridge/
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A authbridge/
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::authbridge/ is already up to date."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing sync PR
+        if: steps.changes.outputs.has_changes == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_PR=$(gh pr list --search "sync: Update authbridge" --state open --json number,url --jq '.[0].url' || true)
+          if [ -n "${OPEN_PR}" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sync PR already open: ${OPEN_PR}"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR
+        if: steps.changes.outputs.has_changes == 'true' && steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="sync/authbridge-$(date +%Y-%m-%d-%H%M%S)"
+          git checkout -b "${BRANCH}"
+          git commit -m "sync: update authbridge from kagenti-extensions (${UPSTREAM_SHA})
+
+          Synced authbridge/ from kagenti/kagenti-extensions.
+
+          Source: https://github.com/kagenti/kagenti-extensions/tree/${{ inputs.source_branch }}/authbridge
+          Upstream-Branch: ${{ inputs.source_branch }}
+          Upstream-Commit: ${UPSTREAM_SHA_FULL}"
+
+          git push origin "${BRANCH}"
+
+          # Find previous sync SHA for compare link
+          PREV_SHA=$(git log origin/main --grep="Upstream-Commit:" -1 --format="%B" 2>/dev/null \
+            | grep -oP '(?<=Upstream-Commit: )[a-f0-9]+' | head -1 || true)
+
+          if [ -n "${PREV_SHA}" ]; then
+            DIFF_LINK="[View upstream diff](https://github.com/kagenti/kagenti-extensions/compare/${PREV_SHA}...${UPSTREAM_SHA_FULL})"
+          else
+            DIFF_LINK="[Browse upstream at \`${UPSTREAM_SHA}\`](https://github.com/kagenti/kagenti-extensions/tree/${UPSTREAM_SHA_FULL}/authbridge)"
+          fi
+
+          gh pr create \
+            --title "sync: Update authbridge from kagenti-extensions ($(date +%Y-%m-%d))" \
+            --body "## AuthBridge Sync
+
+          Syncs \`authbridge/\` from [kagenti/kagenti-extensions](https://github.com/kagenti/kagenti-extensions/tree/${{ inputs.source_branch }}/authbridge) @ [\`${UPSTREAM_SHA}\`](https://github.com/kagenti/kagenti-extensions/commit/${UPSTREAM_SHA_FULL})
+
+          ### Changes
+          \`\`\`
+          $(git diff --stat HEAD~1..HEAD)
+          \`\`\`
+
+          ### Upstream
+          ${DIFF_LINK}
+          " \
+            --base main \
+            --head "${BRANCH}"
