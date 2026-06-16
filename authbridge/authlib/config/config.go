@@ -317,10 +317,48 @@ type ListenerConfig struct {
 	ReverseProxyAddr    string `yaml:"reverse_proxy_addr" json:"reverse_proxy_addr"`
 	ReverseProxyBackend string `yaml:"reverse_proxy_backend" json:"reverse_proxy_backend"`
 
+	// TransparentProxyAddr is the bind address for the outbound transparent
+	// listener used by proxy-sidecar enforce-redirect mode: iptables REDIRECTs
+	// the agent's bypass egress here, and the listener recovers the original
+	// destination via SO_ORIGINAL_DST and tunnels it through the same outbound
+	// pipeline as the forward proxy. The proxy-sidecar / lite presets default it
+	// to ":8082", so for those shapes the listener is effectively always on —
+	// binding is harmless when nothing is redirected to it (cooperative
+	// HTTP_PROXY deployments simply never receive connections on it). An empty
+	// value only disables the listener for modes that have no preset default for
+	// this field (e.g. waypoint / envoy-sidecar); under proxy-sidecar / lite the
+	// preset refills it, matching the always-on enforce-redirect design.
+	TransparentProxyAddr string `yaml:"transparent_proxy_addr" json:"transparent_proxy_addr"`
+
 	// SessionAPIAddr is the bind address for the session events HTTP server
 	// (JSON snapshots + SSE stream consumed by abctl or curl). Default per
 	// mode preset is ":9094". Set to empty string to disable the endpoint.
 	SessionAPIAddr string `yaml:"session_api_addr" json:"session_api_addr"`
+
+	// SkipHosts lists outbound destination host patterns whose traffic
+	// bypasses the plugin pipeline AND session recording entirely. The
+	// listener forwards matched requests as a transparent proxy without
+	// running plugins or appending events to any session bucket.
+	//
+	// Intended for high-volume infrastructure traffic that competes
+	// with agent-meaningful events for session-buffer slots. The
+	// canonical example: an OpenTelemetry collector sidecar that emits
+	// dozens of exports per agent turn — without this gate, those
+	// exports occupy the session buffer's FIFO eviction window and
+	// silently push out the inbound A2A user intent that IBAC needs
+	// to align tool calls against, causing IBAC to fall through to
+	// the no_intent skip path on every call after the first.
+	//
+	// Patterns use `.`-delimited glob semantics (same library as
+	// `authproxy-routes`): "otel-collector*" matches the short
+	// service name, "otel-collector.kagenti-system.svc.cluster.local"
+	// matches the FQDN, "*-collector" matches any single-label name
+	// ending in -collector. Port is stripped before matching, so
+	// patterns must NOT include `:port`.
+	//
+	// Empty list (default) preserves current behavior: every outbound
+	// host runs the pipeline and is eligible for session recording.
+	SkipHosts []string `yaml:"skip_hosts" json:"skip_hosts"`
 }
 
 // StatsConfig represents the configuration for reporting config and statistics
