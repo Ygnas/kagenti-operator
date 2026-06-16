@@ -1,0 +1,221 @@
+# Sync authbridge/ from kagenti/kagenti-extensions.
+#
+# AuthBridge is maintained upstream in kagenti/kagenti-extensions/authbridge
+# and synced into this repository at authbridge/.
+#
+# This workflow is manual-only (workflow_dispatch). It clones the upstream
+# repo, copies only the authbridge/ subdirectory (filtering out repo-level
+# files), and opens a PR for review.
+#
+# See: https://redhat.atlassian.net/browse/RHAIENG-5705
+
+name: Sync AuthBridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Branch to sync from in kagenti/kagenti-extensions"
+        required: false
+        default: "main"
+      dry_run:
+        description: "Dry run — show diff without creating a PR"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync authbridge from upstream
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: https://github.com/kagenti/kagenti-extensions.git
+      UPSTREAM_SUBDIR: authbridge
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Clone upstream (sparse — authbridge/ only)
+        run: |
+          git clone \
+            --depth 1 \
+            --filter=blob:none \
+            --sparse \
+            --branch "${{ inputs.source_branch }}" \
+            "${UPSTREAM_REPO}" \
+            /tmp/kagenti-extensions
+
+          cd /tmp/kagenti-extensions
+          git sparse-checkout set "${UPSTREAM_SUBDIR}"
+
+          echo "::notice::Upstream authbridge/ checked out at $(git rev-parse --short HEAD)"
+          echo "UPSTREAM_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "UPSTREAM_SHA_FULL=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Find previous sync commit
+        run: |
+          # Extract the upstream commit SHA from the last sync commit message.
+          # We look for the "Upstream-Commit:" trailer or fall back to the
+          # "Upstream commit:" line in older commit messages.
+          PREV_SHA=""
+          SYNC_MSG=$(git log --all --grep="sync: update authbridge" -1 --format="%B" 2>/dev/null || true)
+
+          if [ -n "${SYNC_MSG}" ]; then
+            # Try trailer format first: "Upstream-Commit: <full-sha>"
+            PREV_SHA=$(echo "${SYNC_MSG}" | grep -oP '(?<=Upstream-Commit: )[a-f0-9]{7,40}' | head -1 || true)
+            # Fall back to body format: "Upstream commit: <sha>"
+            if [ -z "${PREV_SHA}" ]; then
+              PREV_SHA=$(echo "${SYNC_MSG}" | grep -oP '(?<=Upstream commit: )[a-f0-9]{7,40}' | head -1 || true)
+            fi
+          fi
+
+          if [ -z "${PREV_SHA}" ]; then
+            echo "::notice::No previous sync commit found — this appears to be the first sync."
+          else
+            echo "::notice::Previous sync was from upstream commit ${PREV_SHA}"
+          fi
+          echo "PREV_UPSTREAM_SHA=${PREV_SHA}" >> "$GITHUB_ENV"
+
+      - name: Sync authbridge directory
+        run: |
+          # Use rsync to bring upstream authbridge/ into the local tree.
+          # --delete removes files that no longer exist upstream.
+          rsync -a --delete \
+            /tmp/kagenti-extensions/authbridge/ \
+            authbridge/
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A authbridge/
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changes detected — authbridge/ is already up to date."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Changes detected:"
+            git diff --cached --stat
+          fi
+
+      - name: Show diff (dry run)
+        if: inputs.dry_run && steps.changes.outputs.has_changes == 'true'
+        run: |
+          echo "=== DRY RUN — Changes that would be synced ==="
+          git diff --cached --stat
+          echo ""
+          echo "=== Files changed ==="
+          git diff --cached --name-only
+          echo ""
+          echo "=== Detailed diff ==="
+          git diff --cached
+
+      - name: Create sync branch and commit
+        if: "!inputs.dry_run && steps.changes.outputs.has_changes == 'true'"
+        run: |
+          BRANCH_NAME="sync/authbridge-$(date +%Y-%m-%d-%H%M%S)"
+          echo "SYNC_BRANCH=${BRANCH_NAME}" >> "$GITHUB_ENV"
+          git checkout -b "${BRANCH_NAME}"
+
+          git commit -m "sync: update authbridge from kagenti-extensions (${UPSTREAM_SHA})
+
+          Synced authbridge/ directory from kagenti/kagenti-extensions.
+
+          Source: https://github.com/kagenti/kagenti-extensions/tree/${{ inputs.source_branch }}/authbridge
+          Upstream-Branch: ${{ inputs.source_branch }}
+          Upstream-Commit: ${UPSTREAM_SHA_FULL}"
+
+      - name: Push sync branch
+        if: "!inputs.dry_run && steps.changes.outputs.has_changes == 'true'"
+        run: |
+          git push origin "${SYNC_BRANCH}"
+
+      - name: Create Pull Request
+        if: "!inputs.dry_run && steps.changes.outputs.has_changes == 'true'"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Build the upstream compare section.
+          COMPARE_SECTION=""
+          if [ -n "${PREV_UPSTREAM_SHA}" ]; then
+            COMPARE_SECTION="### Upstream diff
+
+          Compare what changed in the upstream repo since the last sync:
+
+          [View upstream diff on GitHub](https://github.com/kagenti/kagenti-extensions/compare/${PREV_UPSTREAM_SHA}...${UPSTREAM_SHA_FULL})
+
+          Or compare just the \`authbridge/\` directory locally:
+          \`\`\`bash
+          git clone https://github.com/kagenti/kagenti-extensions.git /tmp/ke
+          cd /tmp/ke && git diff ${PREV_UPSTREAM_SHA}..${UPSTREAM_SHA_FULL} -- authbridge/
+          \`\`\`"
+          else
+            COMPARE_SECTION="### Upstream source
+
+          This is the first automated sync — no previous sync commit to compare against.
+
+          [Browse upstream authbridge/ at \`${UPSTREAM_SHA}\`](https://github.com/kagenti/kagenti-extensions/tree/${UPSTREAM_SHA_FULL}/authbridge)"
+          fi
+
+          gh pr create \
+            --title "sync: Update authbridge from kagenti-extensions ($(date +%Y-%m-%d))" \
+            --body "## AuthBridge Sync
+
+          Syncs \`authbridge/\` from [kagenti/kagenti-extensions](https://github.com/kagenti/kagenti-extensions/tree/${{ inputs.source_branch }}/authbridge) (branch: \`${{ inputs.source_branch }}\`, commit: [\`${UPSTREAM_SHA}\`](https://github.com/kagenti/kagenti-extensions/commit/${UPSTREAM_SHA_FULL})).
+
+          ### Changes
+
+          \`\`\`
+          $(git diff --stat HEAD~1..HEAD)
+          \`\`\`
+          ${COMPARE_SECTION}
+
+          ### How to verify
+
+          1. Review the file diff in this PR
+          2. Cross-check against the upstream diff link above to confirm changes match
+          3. CI should pass (authbridge builds are validated by Tekton pipelines)
+
+          To verify locally:
+          \`\`\`bash
+          gh pr checkout <this-pr-number>
+          diff -rq authbridge/ <path-to-kagenti-extensions>/authbridge/
+          \`\`\`
+          " \
+            --base main \
+            --head "${SYNC_BRANCH}"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.changes.outputs.has_changes }}" = "false" ]; then
+            echo "### AuthBridge is already up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No changes detected between \`authbridge/\` and upstream \`kagenti-extensions/${{ inputs.source_branch }}\`." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "### Dry Run Complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Changes were detected but no PR was created (dry run mode)." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### Changed files" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            git diff --cached --stat >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Sync PR Created" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "A pull request has been created to sync authbridge from upstream." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Upstream commit:** \`${UPSTREAM_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Branch:** \`${{ inputs.source_branch }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
