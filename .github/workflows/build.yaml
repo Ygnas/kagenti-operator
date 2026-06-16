@@ -1,0 +1,118 @@
+name: Build-Publish
+
+on:
+  # Trigger on tags like v1.0.0
+  push:
+    tags:
+      - 'v*'
+    # Trigger on PR merges to main
+    branches:
+      - main
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        image_config:
+          # iptables init container — used by envoy-sidecar mode to
+          # set up traffic redirection. Proxy-sidecar mode does not
+          # need this (HTTP_PROXY env var routing replaces iptables).
+          - name: proxy-init
+            context: ./authbridge/proxy-init
+            dockerfile: Dockerfile.init
+
+          # AuthBridge envoy-sidecar combined image —
+          # Envoy + authbridge-envoy (ext_proc) + spiffe-helper.
+          # Spiffe-helper starts conditionally based on SPIRE_ENABLED.
+          - name: authbridge-envoy
+            context: ./authbridge
+            dockerfile: cmd/authbridge-envoy/Dockerfile
+
+          # AuthBridge proxy-sidecar combined image (default mode) —
+          # authbridge-proxy (full plugin set, includes parsers) +
+          # spiffe-helper. No Envoy, no gRPC. Spiffe-helper starts
+          # conditionally based on SPIRE_ENABLED.
+          - name: authbridge
+            context: ./authbridge
+            dockerfile: cmd/authbridge-proxy/Dockerfile
+
+          # AuthBridge proxy-sidecar lite combined image —
+          # authbridge-lite (auth-only plugins, parsers dropped for
+          # binary size) + spiffe-helper. Same listener layout as the
+          # full proxy image; not yet referenced by the operator's
+          # default config.
+          - name: authbridge-lite
+            context: ./authbridge
+            dockerfile: cmd/authbridge-lite/Dockerfile
+
+          # SPARC reflection service — the backend the `sparc` plugin calls.
+          # Deployed once per cluster via authbridge/sparc-service/deploy.
+          - name: sparc-service
+            context: ./authbridge/sparc-service
+            dockerfile: Dockerfile
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+
+      # 2. Set up QEMU for multi-arch builds
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a  # v4
+
+      # 3. Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
+
+      # 4. Log in to GitHub Container Registry
+      - name: Log in to ghcr.io
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 5. Generate image tag
+      - name: Generate image tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            # Use branch name or 'manual' for workflow_dispatch
+            BRANCH="${{ github.ref_name }}"
+            # Sanitize branch name (replace / with -)
+            BRANCH="${BRANCH//\//-}"
+            echo "tag=${BRANCH}-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          fi
+
+      # 6. Extract Docker metadata
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image_config.name }}
+          tags: |
+            # Always use the computed tag
+            type=raw,value=${{ steps.tag.outputs.tag }}
+            # Add 'latest' tag for version tags, workflow_dispatch, and pushes to main
+            type=raw,value=latest,enable=${{ (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+
+      # 7. Build and push image
+      - name: Build and push ${{ matrix.image_config.name }}
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: ${{ matrix.image_config.context }}
+          file: ${{ matrix.image_config.context }}/${{ matrix.image_config.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
