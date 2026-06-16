@@ -1,0 +1,247 @@
+# Sync authbridge/ subtree from kagenti/kagenti-extensions.
+#
+# AuthBridge is maintained upstream in kagenti/kagenti-extensions and
+# imported into this repository as a git subtree at authbridge/.
+#
+# This workflow is manual-only (workflow_dispatch). It either:
+#   1. Bootstraps the subtree relationship (first run) — removes the
+#      existing authbridge/ directory and re-adds it via `git subtree add`.
+#   2. Pulls upstream changes (subsequent runs) via `git subtree pull`.
+#
+# In both cases a PR is opened for review rather than pushing directly.
+#
+# See: https://redhat.atlassian.net/browse/RHAIENG-5705
+
+name: Sync AuthBridge Subtree
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Branch to sync from in kagenti/kagenti-extensions"
+        required: false
+        default: "main"
+      dry_run:
+        description: "Dry run — show diff without creating a PR"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync authbridge from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add kagenti-extensions remote
+        run: |
+          git remote add kagenti-extensions https://github.com/kagenti/kagenti-extensions.git || true
+          git fetch kagenti-extensions ${{ inputs.source_branch }}
+
+      - name: Detect subtree state
+        id: detect
+        run: |
+          # Check if a previous subtree merge exists in history.
+          # git subtree add/pull creates commits with "git-subtree-dir: authbridge" in the trailer.
+          if git log --all --format="%B" | grep -q "git-subtree-dir: authbridge"; then
+            echo "subtree_bootstrapped=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Subtree relationship already established — will use 'git subtree pull'."
+          else
+            echo "subtree_bootstrapped=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Subtree not yet bootstrapped — will perform initial 'git subtree add'."
+          fi
+
+      - name: Create sync branch
+        run: |
+          BRANCH_NAME="sync/authbridge-$(date +%Y-%m-%d-%H%M%S)"
+          echo "SYNC_BRANCH=${BRANCH_NAME}" >> "$GITHUB_ENV"
+          git checkout -b "${BRANCH_NAME}"
+
+      # ── First-run path: bootstrap subtree ──────────────────────────
+      - name: Save ODH-specific files
+        if: steps.detect.outputs.subtree_bootstrapped == 'false'
+        run: |
+          mkdir -p /tmp/odh-preserve
+          PRESERVED=0
+
+          if [ -d "authbridge" ]; then
+            # Walk authbridge/ and save any file that does NOT exist in the
+            # upstream source tree. This preserves Dockerfile.konflux, any
+            # Renovate digest-pin changes, etc.
+            cd authbridge
+            for f in $(find . -type f); do
+              # Check whether upstream has this file
+              if ! git cat-file -e "kagenti-extensions/${{ inputs.source_branch }}:authbridge/${f#./}" 2>/dev/null; then
+                mkdir -p "/tmp/odh-preserve/$(dirname "$f")"
+                cp "$f" "/tmp/odh-preserve/$f"
+                echo "  preserved: $f"
+                PRESERVED=$((PRESERVED + 1))
+              fi
+            done
+            cd ..
+          fi
+
+          echo "PRESERVED_COUNT=${PRESERVED}" >> "$GITHUB_ENV"
+          echo "::notice::Preserved ${PRESERVED} ODH-specific file(s)."
+
+      - name: Remove existing authbridge directory
+        if: steps.detect.outputs.subtree_bootstrapped == 'false'
+        run: |
+          if [ -d "authbridge" ]; then
+            git rm -rf authbridge
+            git commit -m "chore: remove authbridge/ for subtree bootstrap
+
+            Removing the manually-copied authbridge directory to re-add it
+            as a proper git subtree from kagenti/kagenti-extensions.
+
+            This is a one-time operation. Future syncs will use
+            'git subtree pull' which preserves history correctly."
+          else
+            echo "::notice::No authbridge/ directory found — nothing to remove."
+          fi
+
+      - name: Bootstrap subtree with git subtree add
+        if: steps.detect.outputs.subtree_bootstrapped == 'false'
+        run: |
+          git subtree add \
+            --prefix=authbridge \
+            kagenti-extensions \
+            ${{ inputs.source_branch }} \
+            --squash \
+            -m "feat: add authbridge as git subtree from kagenti-extensions
+
+          Upstream: https://github.com/kagenti/kagenti-extensions
+          Branch: ${{ inputs.source_branch }}
+          Subdirectory: authbridge/
+
+          This establishes the git subtree relationship so that future
+          syncs can use 'git subtree pull --prefix=authbridge'."
+
+      - name: Restore ODH-specific files
+        if: steps.detect.outputs.subtree_bootstrapped == 'false' && env.PRESERVED_COUNT != '0'
+        run: |
+          cp -r /tmp/odh-preserve/* authbridge/ 2>/dev/null || true
+          git add authbridge/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: restore ODH-specific files after subtree bootstrap
+
+            Re-added files that exist only in the downstream (ODH) fork
+            and are not present in the upstream kagenti-extensions repo."
+          fi
+
+      # ── Subsequent-run path: subtree pull ──────────────────────────
+      - name: Pull upstream changes via git subtree
+        if: steps.detect.outputs.subtree_bootstrapped == 'true'
+        run: |
+          git subtree pull \
+            --prefix=authbridge \
+            kagenti-extensions \
+            ${{ inputs.source_branch }} \
+            --squash \
+            -m "sync: update authbridge subtree from kagenti-extensions
+
+          Upstream: https://github.com/kagenti/kagenti-extensions
+          Branch: ${{ inputs.source_branch }}
+          Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      # ── Common: check for changes and create PR ────────────────────
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet origin/main..HEAD; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changes detected — authbridge/ is already up to date."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            STATS=$(git diff --stat origin/main..HEAD)
+            echo "::notice::Changes detected:"
+            echo "$STATS"
+          fi
+
+      - name: Show diff (dry run)
+        if: inputs.dry_run && steps.changes.outputs.has_changes == 'true'
+        run: |
+          echo "=== DRY RUN — Changes that would be synced ==="
+          git diff --stat origin/main..HEAD
+          echo ""
+          echo "=== Files changed ==="
+          git diff --name-only origin/main..HEAD
+          echo ""
+          echo "=== Detailed diff ==="
+          git diff origin/main..HEAD
+
+      - name: Push sync branch
+        if: "!inputs.dry_run && steps.changes.outputs.has_changes == 'true'"
+        run: |
+          git push origin "${SYNC_BRANCH}"
+
+      - name: Create Pull Request
+        if: "!inputs.dry_run && steps.changes.outputs.has_changes == 'true'"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BOOTSTRAP_NOTE=""
+          if [ "${{ steps.detect.outputs.subtree_bootstrapped }}" = "false" ]; then
+            BOOTSTRAP_NOTE="
+          > **Note:** This is the initial subtree bootstrap. The existing authbridge/
+          > directory was removed and re-added via \`git subtree add --squash\` to
+          > establish proper subtree tracking. Future syncs will use \`git subtree pull\`
+          > and produce smaller, incremental diffs."
+          fi
+
+          gh pr create \
+            --title "sync: Update authbridge from kagenti-extensions ($(date +%Y-%m-%d))" \
+            --body "## AuthBridge Subtree Sync
+
+          Syncs \`authbridge/\` from [kagenti/kagenti-extensions](https://github.com/kagenti/kagenti-extensions) (branch: \`${{ inputs.source_branch }}\`).
+          ${BOOTSTRAP_NOTE}
+
+          ### Changes
+
+          \`\`\`
+          $(git diff --stat origin/main..HEAD)
+          \`\`\`
+
+          ### How to verify
+
+          1. Review the file changes to ensure upstream authbridge updates are correct
+          2. Confirm no ODH-specific files were accidentally removed
+          3. CI should pass (authbridge builds are validated by Tekton pipelines)
+
+          ### References
+
+          - Upstream source: https://github.com/kagenti/kagenti-extensions/tree/${{ inputs.source_branch }}/authbridge
+          - Jira: [RHAIENG-5705](https://redhat.atlassian.net/browse/RHAIENG-5705)
+          " \
+            --base main \
+            --head "${SYNC_BRANCH}"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.changes.outputs.has_changes }}" = "false" ]; then
+            echo "### ✅ AuthBridge is already up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No changes detected between \`authbridge/\` and upstream \`kagenti-extensions/${{ inputs.source_branch }}\`." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "### 🔍 Dry Run Complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Changes were detected but no PR was created (dry run mode)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### 🔄 Sync PR Created" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "A pull request has been created to sync authbridge from upstream." >> "$GITHUB_STEP_SUMMARY"
+          fi

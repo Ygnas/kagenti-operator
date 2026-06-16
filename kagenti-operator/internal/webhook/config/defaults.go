@@ -17,7 +17,7 @@ func CompiledDefaults() *PlatformConfig {
 			// authbridge: combined image for proxy-sidecar mode (default
 			// deployment shape) — authbridge-proxy + spiffe-helper
 			// bundled, no Envoy, no gRPC.
-			AuthBridge: "ghcr.io/kagenti/kagenti-extensions/authbridge:latest",
+			AuthBridge: "quay.io/opendatahub/odh-authbridge:latest",
 			// authbridge-lite: size-optimized variant for the "lite"
 			// mode. Same listener layout as AuthBridge but parsers
 			// (a2a/mcp/inference) are dropped.
@@ -35,6 +35,9 @@ func CompiledDefaults() *PlatformConfig {
 			// Transparent listener port — must match the authbridge proxy-sidecar
 			// preset (listener.transparent_proxy_addr default :8082).
 			TransparentPort: 8082,
+			// Empty by default: proxy-init auto-detects the iptables backend from
+			// /proc/modules. Set (e.g. "iptables") to force a backend per-platform.
+			IptablesCmd: "",
 		},
 		Resources: ResourcesConfig{
 			EnvoyProxy: corev1.ResourceRequirements{
