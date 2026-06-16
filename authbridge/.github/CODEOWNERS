@@ -1,0 +1,12 @@
+# Default owners for everything
+* @kagenti/maintainers
+
+# AuthBridge components
+authbridge/ @kagenti/maintainers
+
+# CI/CD and GitHub configuration
+.github/ @kagenti/platform
+
+# Documentation
+*.md @kagenti/maintainers
+docs/ @kagenti/maintainers

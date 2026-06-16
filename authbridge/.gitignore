@@ -1,0 +1,69 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+cover.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build artifacts
+
+# Build artifacts and binaries
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# venv
+venv
+.venv
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+!.env.template
+.env.local
+*.key
+*.pem
+*.p12
+*.jks
+credentials.json
+credentials.env
+secrets.json
+secrets.env
+kubeconfig
+*.kubeconfig
+
+# Python
+__pycache__/
+*.pyc
+.ruff_cache/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+test-jwt-rotation.sh
+kagenti-webhook/bin/

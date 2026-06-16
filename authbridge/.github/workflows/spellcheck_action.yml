@@ -1,0 +1,24 @@
+name: Spellcheck Action
+on:
+  pull_request:
+    branches:
+      - main
+      - "release-*"
+  push:
+    branches:
+      - main
+
+jobs:
+  spellcheck:
+    # disable spell check with 'false' value.
+    if: false
+    name: Spellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+
+      - name: Check spelling
+        uses: rojopolis/spellcheck-github-actions@e3cd8e9aec4587ec73bc0e60745aafd45c37aa2e  # 0.60.0
+        with:
+          config_path: .github/spellcheck/.spellcheck.yml
+          task_name: Markdown

@@ -1,0 +1,46 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Go - authlib (the shared library — pulled in by every cmd/* binary
+  # via replace directives, so updates here flow into everything).
+  - package-ecosystem: gomod
+    directory: /authbridge/authlib
+    schedule:
+      interval: weekly
+
+  # Go - mode-specific binaries
+  - package-ecosystem: gomod
+    directory: /authbridge/cmd/authbridge-proxy
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /authbridge/cmd/authbridge-envoy
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /authbridge/cmd/authbridge-lite
+    schedule:
+      interval: weekly
+
+  # Go - abctl TUI
+  - package-ecosystem: gomod
+    directory: /authbridge/cmd/abctl
+    schedule:
+      interval: weekly
+
+  # Python - root (tests)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Docker - proxy-init (iptables init container, envoy-sidecar mode)
+  - package-ecosystem: docker
+    directory: /authbridge/proxy-init
+    schedule:
+      interval: weekly
