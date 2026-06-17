@@ -145,15 +145,28 @@ type kuadrantBootstrap struct {
 
 func (b *kuadrantBootstrap) Start(ctx context.Context) error {
 	kuadrantLogger.Info("Bootstrap: triggering initial Kuadrant reconcile")
-	_, err := b.reconciler.Reconcile(ctx, ctrl.Request{
+	req := ctrl.Request{
 		NamespacedName: types.NamespacedName{
 			Name:      kuadrantCRName,
 			Namespace: kuadrantNamespace,
 		},
-	})
-	if err != nil {
-		kuadrantLogger.Error(err, "Bootstrap reconcile failed — controller watch will retry on next event")
 	}
+
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		_, err := b.reconciler.Reconcile(ctx, req)
+		if err == nil {
+			return nil
+		}
+		kuadrantLogger.Error(err, "Bootstrap reconcile attempt failed", "attempt", attempt+1, "maxAttempts", maxAttempts)
+		delay := time.Duration(attempt+1) * 5 * time.Second
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(delay):
+		}
+	}
+	kuadrantLogger.Info("Bootstrap reconcile exhausted retries — CR will be created on the next watch event or operator restart")
 	return nil
 }
 
