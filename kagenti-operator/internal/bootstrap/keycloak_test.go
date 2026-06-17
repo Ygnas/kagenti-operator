@@ -34,6 +34,9 @@ func keycloakTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = corev1.AddToScheme(s)
 	_ = appsv1.AddToScheme(s)
+	s.AddKnownTypeWithName(keycloakGVK, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(realmImportGVK, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(routeGVK, &unstructured.Unstructured{})
 	return s
 }
 
@@ -92,6 +95,28 @@ func TestKeycloak_CreatesPostgresResources(t *testing.T) {
 	}
 	if svc.Spec.Ports[0].Port != 5432 {
 		t.Errorf("unexpected port: %d", svc.Spec.Ports[0].Port)
+	}
+
+	// Keycloak CR
+	keycloakCR := &unstructured.Unstructured{}
+	keycloakCR.SetGroupVersionKind(keycloakGVK)
+	if err := r.Client.Get(context.Background(), types.NamespacedName{Name: "keycloak", Namespace: "keycloak"}, keycloakCR); err != nil {
+		t.Fatalf("Keycloak CR not created: %v", err)
+	}
+	dbVendor, _, _ := unstructured.NestedString(keycloakCR.Object, "spec", "db", "vendor")
+	if dbVendor != "postgres" {
+		t.Errorf("unexpected db vendor: %s", dbVendor)
+	}
+
+	// Route
+	route := &unstructured.Unstructured{}
+	route.SetGroupVersionKind(routeGVK)
+	if err := r.Client.Get(context.Background(), types.NamespacedName{Name: "keycloak", Namespace: "keycloak"}, route); err != nil {
+		t.Fatalf("Keycloak Route not created: %v", err)
+	}
+	toName, _, _ := unstructured.NestedString(route.Object, "spec", "to", "name")
+	if toName != "keycloak-service" {
+		t.Errorf("unexpected Route target service: %s", toName)
 	}
 }
 
