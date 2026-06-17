@@ -62,10 +62,15 @@ func ResolveOwner(pod *corev1.Pod) OwnerInfo {
 }
 
 // IsPodOwnedBy returns true if the pod is owned (directly or via a
-// ReplicaSet) by the named workload. Supports Deployment (via
-// ReplicaSet), StatefulSet, and Sandbox ownership chains.
+// ReplicaSet) by the named workload. Only controller ownerReferences
+// are considered, consistent with ResolveOwner. Supports Deployment
+// (via ReplicaSet), StatefulSet, and Sandbox ownership chains.
 func IsPodOwnedBy(pod *corev1.Pod, workloadName string) bool {
-	for _, ref := range pod.OwnerReferences {
+	for i := range pod.OwnerReferences {
+		ref := &pod.OwnerReferences[i]
+		if ref.Controller == nil || !*ref.Controller {
+			continue
+		}
 		switch ref.Kind {
 		case "ReplicaSet":
 			if idx := strings.LastIndex(ref.Name, "-"); idx > 0 && ref.Name[:idx] == workloadName {

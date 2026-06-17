@@ -145,8 +145,12 @@ func discoverFromSpireBundle(ctx context.Context, c client.Reader, ns string) (s
 
 // extractTrustDomainFromBundle parses SPIFFE bundle JSON where top-level keys are trust domains.
 // Format: {"example.org": {"keys": [...]}}
-// When multiple trust domains exist, the lexicographically smallest is returned
-// for deterministic behaviour across restarts.
+//
+// This function assumes a single-domain bundle (the common case). When
+// multiple trust domains exist (federated deployments), the lexicographically
+// smallest is returned for deterministic behaviour across restarts. This may
+// pick a federated peer's domain over the local one — if that becomes a
+// problem, callers should pass an expected trust domain to select explicitly.
 func extractTrustDomainFromBundle(raw string) (string, error) {
 	var bundle map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &bundle); err != nil {

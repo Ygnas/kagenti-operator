@@ -97,6 +97,12 @@ func (l *ConfigLoader) Load() error {
 // Get returns the current config snapshot (lock-free, no copy).
 // The returned pointer must be treated as read-only; callers that need
 // to mutate config should DeepCopy explicitly.
+//
+// NOTE: PlatformConfig contains reference-typed fields (Resources →
+// corev1.ResourceRequirements with Limits/Requests maps). Struct-copying
+// the returned value shares the underlying maps with the singleton.
+// Never mutate map entries obtained through this pointer — doing so
+// corrupts the shared config for all concurrent webhook requests.
 func (l *ConfigLoader) Get() *PlatformConfig {
 	return l.currentConfig.Load()
 }

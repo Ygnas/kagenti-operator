@@ -83,7 +83,7 @@ func TestIsPodOwnedBy_Deployment(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			OwnerReferences: []metav1.OwnerReference{
-				{Kind: "ReplicaSet", Name: "my-deploy-abc123"},
+				{Kind: "ReplicaSet", Name: "my-deploy-abc123", Controller: boolPtr(true)},
 			},
 		},
 	}
@@ -99,7 +99,7 @@ func TestIsPodOwnedBy_StatefulSet(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			OwnerReferences: []metav1.OwnerReference{
-				{Kind: "StatefulSet", Name: "my-sts"},
+				{Kind: "StatefulSet", Name: "my-sts", Controller: boolPtr(true)},
 			},
 		},
 	}
@@ -112,7 +112,7 @@ func TestIsPodOwnedBy_Sandbox(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			OwnerReferences: []metav1.OwnerReference{
-				{Kind: "Sandbox", Name: "my-sandbox"},
+				{Kind: "Sandbox", Name: "my-sandbox", Controller: boolPtr(true)},
 			},
 		},
 	}
