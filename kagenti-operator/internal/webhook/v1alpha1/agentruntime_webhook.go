@@ -110,7 +110,7 @@ func checkMTLSCompatibleWithMode(rt *agentv1alpha1.AgentRuntime) error {
 // (Envoy data plane) or waypoint it would silently do nothing, so fail loud at
 // admission. Empty authBridgeMode defaults to proxy-sidecar and is allowed.
 func checkTLSBridgeCompatibleWithMode(rt *agentv1alpha1.AgentRuntime) error {
-	if rt.Spec.TLSBridgeMode != "enabled" {
+	if rt.Spec.TLSBridgeMode != agentv1alpha1.TLSBridgeModeEnabled {
 		return nil
 	}
 	switch rt.Spec.AuthBridgeMode {

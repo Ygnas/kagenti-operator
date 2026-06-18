@@ -36,6 +36,18 @@ const (
 	TransportSecurityHTTP TransportSecurity = "http"
 )
 
+// TLS-bridge shared contract (used by the injector, the CA reconciler, and the
+// validating webhook). Lives in this leaf API package so all three reference one
+// source without an import cycle.
+const (
+	// TLSBridgeModeDisabled / Enabled are the spec.tlsBridgeMode enum values.
+	TLSBridgeModeDisabled = "disabled"
+	TLSBridgeModeEnabled  = "enabled"
+	// TLSBridgeCASecretSuffix names the per-agent CA Secret the reconciler
+	// creates and the webhook mounts: "<agentName>" + suffix.
+	TLSBridgeCASecretSuffix = "-tls-bridge-ca"
+)
+
 // AgentRuntimeSpec defines the desired state of AgentRuntime.
 type AgentRuntimeSpec struct {
 	// Type classifies the workload as an agent or tool

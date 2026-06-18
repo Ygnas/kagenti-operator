@@ -83,14 +83,10 @@ const (
 )
 
 const (
-	// TLS bridge modes (AgentRuntime.spec.tlsBridgeMode).
-	TLSBridgeModeDisabled = "disabled"
-	TLSBridgeModeEnabled  = "enabled"
-
 	// TLSBridgeCAVolumeName is the Secret-backed volume carrying the per-agent
 	// cert-manager CA. tls.crt/tls.key go to the sidecar (signing); ca.crt goes
-	// to the agent (trust).
-	TLSBridgeCAVolumeName   = "tls-bridge-ca"
-	TLSBridgeCAMountPath    = "/etc/authbridge/tls-bridge-ca"
-	TLSBridgeCASecretSuffix = "-tls-bridge-ca"
+	// to the agent (trust). The mode values + secret-name suffix are the shared
+	// contract and live in api/v1alpha1 (TLSBridgeMode*, TLSBridgeCASecretSuffix).
+	TLSBridgeCAVolumeName = "tls-bridge-ca"
+	TLSBridgeCAMountPath  = "/etc/authbridge/tls-bridge-ca"
 )

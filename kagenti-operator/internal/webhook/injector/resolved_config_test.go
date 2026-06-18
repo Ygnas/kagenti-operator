@@ -150,7 +150,7 @@ func TestResolveConfig_TLSBridgeMode_Precedence(t *testing.T) {
 		t.Errorf("namespace: got %q, want enabled", rc.TLSBridgeMode)
 	}
 	// Default when nothing sets it.
-	if rc := ResolveConfig(config.CompiledDefaults(), nil, nil); rc.TLSBridgeMode != TLSBridgeModeDisabled {
-		t.Errorf("default: got %q, want %q", rc.TLSBridgeMode, TLSBridgeModeDisabled)
+	if rc := ResolveConfig(config.CompiledDefaults(), nil, nil); rc.TLSBridgeMode != "disabled" {
+		t.Errorf("default: got %q, want disabled", rc.TLSBridgeMode)
 	}
 }

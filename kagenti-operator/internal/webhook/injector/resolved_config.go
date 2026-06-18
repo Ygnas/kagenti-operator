@@ -17,6 +17,7 @@ limitations under the License.
 package injector
 
 import (
+	agentv1alpha1 "github.com/kagenti/operator/api/v1alpha1"
 	"github.com/kagenti/operator/internal/webhook/config"
 )
 
@@ -129,7 +130,7 @@ func ResolveConfig(platform *config.PlatformConfig, ns *NamespaceConfig, ar *Age
 		resolved.MTLSMode = m
 	}
 	// TLS bridge defaults to disabled; CR override > namespace > disabled.
-	resolved.TLSBridgeMode = TLSBridgeModeDisabled
+	resolved.TLSBridgeMode = agentv1alpha1.TLSBridgeModeDisabled
 	if ar != nil && ar.TLSBridgeMode != nil {
 		resolved.TLSBridgeMode = *ar.TLSBridgeMode
 	} else if m := ExtractTLSBridgeMode(resolved.AuthBridgeRuntimeYAML); m != "" {
