@@ -135,7 +135,7 @@ if [[ -d "${TARGET_DIR}" ]]; then
 
   while IFS= read -r line; do
     [[ "${line}" == \*deleting* ]] || continue
-    file="${line#\*deleting }"; file="${file%/}"
+    file="${line#\*deleting }"; file="${file#"${file%%[! ]*}"}"; file="${file%/}"
     [[ -d "${TARGET_DIR}/${file}" ]] && continue
     echo "${exclude_pattern}" | grep -qxF "${file}" && continue
 
