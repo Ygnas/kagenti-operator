@@ -1,0 +1,132 @@
+# Sync authbridge/ from kagenti/kagenti-extensions.
+#
+# Manually triggered. Delegates to scripts/sync/sync-authbridge.sh which
+# sparse-clones the upstream repo, rsyncs only authbridge/ (preserving
+# ODH-specific files), applies carried patches, and stages the result.
+# This workflow then commits and opens/updates a PR if changes are found.
+#
+# The sync script can also be run locally for debugging:
+#   ./scripts/sync/sync-authbridge.sh --branch main --dry-run
+
+name: Sync AuthBridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Branch to sync from in kagenti/kagenti-extensions"
+        required: false
+        default: "main"
+      upstream_commit:
+        description: "Specific upstream commit SHA to sync to (leave empty for latest)"
+        required: false
+        default: ""
+
+jobs:
+  sync:
+    name: Sync authbridge from upstream
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-authbridge
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      SYNC_BRANCH: sync/authbridge
+    steps:
+      - name: Validate workflow inputs
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          UPSTREAM_COMMIT: ${{ inputs.upstream_commit }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${SOURCE_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "${SOURCE_BRANCH}" =~ (^-|[[:space:]]|//|\.\.) ]]; then
+            echo "::error::Invalid source_branch: ${SOURCE_BRANCH}"
+            exit 1
+          fi
+          if [[ -n "${UPSTREAM_COMMIT}" ]] && [[ ! "${UPSTREAM_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::upstream_commit must be a 40-char hex SHA"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync authbridge from upstream
+        id: sync
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          UPSTREAM_COMMIT: ${{ inputs.upstream_commit }}
+        run: ./scripts/sync/sync-authbridge.sh
+
+      - name: Push and open PR
+        if: steps.sync.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: |
+          git checkout -B "${SYNC_BRANCH}"
+
+          # Build commit message body
+          commit_body="Synced authbridge/ from kagenti/kagenti-extensions."
+          if [[ -n "${UPSTREAM_DELETIONS:-}" ]]; then
+            commit_body="${commit_body}
+
+          Upstream deletions (files removed upstream):
+          ${UPSTREAM_DELETIONS}"
+          fi
+          commit_body="${commit_body}
+
+          Source: https://github.com/kagenti/kagenti-extensions/tree/${SOURCE_BRANCH}/authbridge
+          Upstream-Branch: ${SOURCE_BRANCH}
+          Upstream-Commit: ${UPSTREAM_SHA_FULL}"
+
+          git commit -m "sync: update authbridge from kagenti-extensions (${UPSTREAM_SHA})
+
+          ${commit_body}"
+
+          git push origin "${SYNC_BRANCH}" --force
+
+          TITLE="sync: Update authbridge from kagenti-extensions ($(date +%Y-%m-%d))"
+          # Build upstream deletions section for PR body
+          deletions_section=""
+          if [[ -n "${UPSTREAM_DELETIONS:-}" ]]; then
+            deletions_section="
+          ### Upstream Deletions
+          Files removed upstream and allowed through the deletion guard:
+          \`\`\`
+          ${UPSTREAM_DELETIONS}
+          \`\`\`
+          "
+          fi
+
+          BODY=$(cat <<EOF
+          ## AuthBridge Sync
+
+          Syncs \`authbridge/\` from [kagenti/kagenti-extensions](https://github.com/kagenti/kagenti-extensions/tree/${SOURCE_BRANCH}/authbridge) @ [\`${UPSTREAM_SHA}\`](https://github.com/kagenti/kagenti-extensions/commit/${UPSTREAM_SHA_FULL})
+
+          ### Changes
+          \`\`\`
+          $(git diff --stat HEAD~1..HEAD)
+          \`\`\`
+          ${deletions_section}
+          [Browse upstream authbridge/](https://github.com/kagenti/kagenti-extensions/tree/${UPSTREAM_SHA_FULL}/authbridge)
+          EOF
+          )
+
+          # Create PR or update if one is already open on this branch
+          if gh pr view "${SYNC_BRANCH}" --json state --jq '.state' 2>/dev/null | grep -qi open; then
+            gh pr edit "${SYNC_BRANCH}" --title "${TITLE}" --body "${BODY}"
+            echo "::notice::Updated existing PR on ${SYNC_BRANCH}"
+          else
+            gh pr create --title "${TITLE}" --body "${BODY}" --base main --head "${SYNC_BRANCH}"
+          fi
