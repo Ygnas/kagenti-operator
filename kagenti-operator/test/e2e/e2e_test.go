@@ -392,7 +392,7 @@ var _ = Describe("AuthBridge Injection E2E", Ordered, func() {
 			"-n", authBridgeTestNamespace, "--ignore-not-found")
 		out, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(out)).To(BeEmpty(), "per-namespace envoy-config CM should not exist")
+		Expect(out).To(BeEmpty(), "per-namespace envoy-config CM should not exist")
 
 		By("pre-creating Keycloak client credentials Secret (no real Keycloak in e2e)")
 		_, err = utils.KubectlApplyStdin(
@@ -1588,7 +1588,7 @@ rules:
 			"-n", combinedTestNamespace, "--ignore-not-found")
 		out, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(string(out)).To(BeEmpty(), "per-namespace envoy-config CM should not exist")
+		Expect(out).To(BeEmpty(), "per-namespace envoy-config CM should not exist")
 
 		By("pre-creating Keycloak client credentials Secret (no real Keycloak in e2e)")
 		_, err = utils.KubectlApplyStdin(

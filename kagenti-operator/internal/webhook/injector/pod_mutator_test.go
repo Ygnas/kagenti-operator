@@ -1654,7 +1654,7 @@ func TestEnsurePerAgentConfigMap_OwnerReference_SetFromSandbox(t *testing.T) {
 	ctx := context.Background()
 
 	cmName, err := m.ensurePerAgentConfigMap(ctx, "team1", "my-sandbox-agent",
-		ModeEnvoySidecar, "", &NamespaceConfig{ClientAuthType: "client-secret"}, nil, "", nil, "")
+		ModeEnvoySidecar, "", &NamespaceConfig{ClientAuthType: "client-secret"}, nil, "", nil, "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
