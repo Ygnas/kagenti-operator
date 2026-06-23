@@ -102,6 +102,18 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # Prometheus and CertManager are installed by default; skip with:
 # - PROMETHEUS_INSTALL_SKIP=true
 # - CERT_MANAGER_INSTALL_SKIP=true
+.PHONY: test-e2e-ci
+test-e2e-ci: ## Run e2e tests without code-gen prereqs (for CI where lint/test already validate them).
+	@command -v kind >/dev/null 2>&1 || { \
+		echo "Kind is not installed. Please install Kind manually."; \
+		exit 1; \
+	}
+	@kind get clusters | grep -q 'kind' || { \
+		echo "No Kind cluster is running. Please start a Kind cluster before running the e2e tests."; \
+		exit 1; \
+	}
+	go test ./test/e2e/ -v -ginkgo.v -timeout 45m
+
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	@command -v kind >/dev/null 2>&1 || { \
@@ -113,6 +125,19 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated 
 		exit 1; \
 	}
 	go test ./test/e2e/ -v -ginkgo.v -timeout 45m
+
+.PHONY: test-integration-ci
+test-integration-ci: kustomize ## Run integration tests without code-gen prereqs (for CI where lint/test already validate them).
+	@command -v kind >/dev/null 2>&1 || { \
+		echo "ERROR: kind is not installed. Install from https://kind.sigs.k8s.io/"; \
+		exit 1; \
+	}
+	@kind get clusters | grep -q 'kind' || { \
+		echo "ERROR: no Kind cluster found. Create one with: kind create cluster"; \
+		exit 1; \
+	}
+	$(MAKE) install
+	go test -v -tags=$(INTEGRATION_TAGS) ./test/integration/... -timeout 5m
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet ## Run integration tests (requires Kind cluster)
