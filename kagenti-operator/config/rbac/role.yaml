@@ -8,17 +8,6 @@ rules:
   - ""
   resources:
   - configmaps
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - secrets
   verbs:
   - create
@@ -33,6 +22,7 @@ rules:
   resources:
   - namespaces
   verbs:
+  - create
   - get
   - list
   - patch
@@ -51,17 +41,12 @@ rules:
   - ""
   resources:
   - serviceaccounts
+  - services
   verbs:
   - create
   - get
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - services
-  verbs:
-  - get
   - list
+  - update
   - watch
 - apiGroups:
   - ""
@@ -101,22 +86,6 @@ rules:
   - patch
   - update
 - apiGroups:
-  - agent.kagenti.dev
-  resources:
-  - authorizationpolicies
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - agent.kagenti.dev
-  resources:
-  - authorizationpolicies/status
-  verbs:
-  - get
-  - update
-  - patch
-- apiGroups:
   - agents.x-k8s.io
   resources:
   - sandboxes
@@ -145,7 +114,6 @@ rules:
   resources:
   - daemonsets
   - deployments
-  - statefulsets
   verbs:
   - get
   - list
@@ -160,9 +128,32 @@ rules:
   verbs:
   - update
 - apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - cert-manager.io
   resources:
   - certificates
+  - issuers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
   - clusterissuers
   verbs:
   - get
@@ -183,6 +174,28 @@ rules:
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - k8s.keycloak.org
+  resources:
+  - keycloakrealmimports
+  - keycloaks
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+- apiGroups:
+  - kuadrant.io
+  resources:
+  - kuadrants
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - mlflow.kubeflow.org
@@ -285,5 +298,7 @@ rules:
   resources:
   - routes
   verbs:
+  - create
   - get
   - list
+  - update

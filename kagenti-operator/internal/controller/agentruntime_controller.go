@@ -88,6 +88,10 @@ const (
 
 	// AnnotationRestartPendingValue is the value set on AnnotationRestartPending.
 	AnnotationRestartPendingValue = "true"
+
+	// SPIRE volume names injected by the webhook when mTLS is enabled.
+	VolumeSpireAgentSocket = "spire-agent-socket"
+	VolumeSVIDOutput       = "svid-output"
 )
 
 var sandboxGVK = schema.GroupVersionKind{
@@ -212,7 +216,10 @@ func (r *AgentRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			fmt.Sprintf("Namespace %s opted out of Istio mesh enrollment", rt.Namespace))
 	}
 
-	// 4.7. Ensure SCC RoleBinding exists in the namespace.
+	// 4.7. Evaluate MTLSReady condition based on resolved mTLSMode and SPIRE availability.
+	r.evaluateMTLSReady(ctx, rt)
+
+	// 4.8. Ensure SCC RoleBinding exists in the namespace.
 	// Creates a RoleBinding granting all ServiceAccounts in the namespace
 	// access to the kagenti-authbridge SCC. No-op on non-OpenShift clusters.
 	// On OpenShift, a transient failure is retried via requeue to prevent
@@ -763,6 +770,72 @@ func (r *AgentRuntimeReconciler) handleDeletion(ctx context.Context, rt *agentv1
 	return ctrl.Result{}, nil
 }
 
+// evaluateMTLSReady sets the MTLSReady condition based on the resolved
+// mTLSMode and whether SPIRE infrastructure is available on the workload.
+// This is informational — MTLSReady=False does NOT block Ready=True.
+func (r *AgentRuntimeReconciler) evaluateMTLSReady(ctx context.Context, rt *agentv1alpha1.AgentRuntime) {
+	logger := log.FromContext(ctx)
+
+	mtlsMode := rt.Spec.MTLSMode
+	if mtlsMode == "" {
+		mtlsMode = "permissive"
+	}
+
+	if mtlsMode == "disabled" {
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionTrue, "MTLSDisabled",
+			"mTLS explicitly disabled on this AgentRuntime")
+		return
+	}
+
+	// Check if workload has SPIRE infrastructure by looking for
+	// spire-agent-socket or svid-output volumes in the pod template.
+	acc, ok := newRuntimePodTemplateAccessor(rt.Spec.TargetRef.Kind)
+	if !ok {
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionFalse, "UnsupportedKind",
+			fmt.Sprintf("Cannot check SPIRE availability for workload kind %s", rt.Spec.TargetRef.Kind))
+		return
+	}
+
+	key := types.NamespacedName{Name: rt.Spec.TargetRef.Name, Namespace: rt.Namespace}
+	if err := r.Get(ctx, key, acc.obj); err != nil {
+		logger.V(1).Info("Cannot read workload for SPIRE check", "error", err)
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionFalse, "WorkloadNotFound",
+			fmt.Sprintf("Cannot verify SPIRE availability: %v", err))
+		return
+	}
+
+	podSpec := acc.getPodSpec(acc.obj)
+	if podSpec == nil {
+		// Sandbox workloads don't expose a typed PodSpec; assume SPIRE
+		// is available since the webhook handles injection at pod CREATE.
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionTrue, "SPIREAssumed",
+			"Sandbox workload; SPIRE availability assumed (webhook handles injection)")
+		return
+	}
+
+	spireDetected := false
+	for _, v := range podSpec.Volumes {
+		if v.Name == VolumeSpireAgentSocket || v.Name == VolumeSVIDOutput {
+			spireDetected = true
+			break
+		}
+	}
+
+	if spireDetected {
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionTrue, "SPIREAvailable",
+			fmt.Sprintf("SPIRE volumes detected on workload %s; mTLS mode: %s", rt.Spec.TargetRef.Name, mtlsMode))
+	} else {
+		msg := "mTLS requires SPIRE; either deploy SPIRE or set mTLSMode: disabled"
+		r.setCondition(rt, ConditionTypeMTLSReady, metav1.ConditionFalse, "SPIREUnavailable", msg)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(rt, nil, corev1.EventTypeWarning, "SPIREUnavailable",
+				"MTLSReadyCheck", msg)
+		}
+		logger.Info("SPIRE not detected for mTLS-enabled workload",
+			"workload", rt.Spec.TargetRef.Name, "mtlsMode", mtlsMode)
+	}
+}
+
 func (r *AgentRuntimeReconciler) setCondition(rt *agentv1alpha1.AgentRuntime, condType string, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&rt.Status.Conditions, metav1.Condition{
 		Type:               condType,
@@ -972,7 +1045,6 @@ func computeCardContentHash(cardData *agentv1alpha1.AgentCardData) string {
 var templateConfigMapNames = []string{
 	"authbridge-config",
 	"authbridge-runtime-config",
-	"envoy-config",
 	"spiffe-helper-config",
 }
 
@@ -1331,6 +1403,12 @@ func newRuntimePodTemplateAccessor(kind string) (*runtimePodTemplateAccessor, bo
 				u := o.(*unstructured.Unstructured)
 				_ = unstructured.SetNestedStringMap(u.Object, a, "spec", "podTemplate", "metadata", "annotations")
 			},
+			// getPodSpec is not implemented for Sandbox: extracting a typed
+			// *corev1.PodSpec out of the unstructured podTemplate isn't needed
+			// today (the only former caller, OCI skill mounting, was removed).
+			// Return nil rather than leaving the func nil so a future caller hits
+			// a nil-check, not a nil-function-call panic.
+			getPodSpec: func(client.Object) *corev1.PodSpec { return nil },
 		}, true
 	default:
 		return nil, false

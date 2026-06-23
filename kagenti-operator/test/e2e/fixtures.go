@@ -19,9 +19,60 @@ package e2e
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 
 	"github.com/kagenti/operator/internal/clientreg"
 )
+
+// curlImage returns the container image used for curl-based test pods.
+// Override with E2E_CURL_IMAGE for environments where Docker Hub is unavailable.
+func curlImage() string {
+	if v := os.Getenv("E2E_CURL_IMAGE"); v != "" {
+		return v
+	}
+	return "curlimages/curl:latest"
+}
+
+// pythonImage returns the container image used for Python-based test workloads.
+// Override with E2E_PYTHON_IMAGE for environments that need a different registry.
+func pythonImage() string {
+	if v := os.Getenv("E2E_PYTHON_IMAGE"); v != "" {
+		return v
+	}
+	return "docker.io/python:3.11-slim"
+}
+
+// runAsUserYAML returns a YAML line setting runAsUser for pod security contexts.
+// The default images (curlimages/curl, python:3.11-slim) need an explicit numeric
+// UID because they either use a non-numeric user or run as root, which fails the
+// runAsNonRoot check without it.
+// Set E2E_RUN_AS_USER=none to omit the line entirely (e.g. OpenShift assigns UIDs
+// via SCC), or E2E_RUN_AS_USER=<uid> to override the value.
+func runAsUserYAML(defaultUID string) string {
+	v := os.Getenv("E2E_RUN_AS_USER")
+	if v == "none" {
+		return ""
+	}
+	uid := defaultUID
+	if v != "" {
+		uid = v
+	}
+	return fmt.Sprintf("\n        runAsUser: %s", uid)
+}
+
+// runAsUserJSON returns a JSON fragment for runAsUser inside a securityContext.
+// Returns empty string when E2E_RUN_AS_USER=none.
+func runAsUserJSON(defaultUID string) string {
+	v := os.Getenv("E2E_RUN_AS_USER")
+	if v == "none" {
+		return ""
+	}
+	uid := defaultUID
+	if v != "" {
+		uid = v
+	}
+	return fmt.Sprintf(`, "runAsUser": %s`, uid)
+}
 
 const testNamespace = "e2e-agentcard-test"
 const authBridgeTestNamespace = "e2e-authbridge-test"
@@ -76,13 +127,12 @@ spec:
         protocol.kagenti.io/a2a: ""
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: echo
-          image: docker.io/python:3.11-slim
+          image: ` + pythonImage() + `
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -153,8 +203,7 @@ spec:
         kagenti.io/inject: disabled
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -222,13 +271,12 @@ spec:
         protocol.kagenti.io/a2a: ""
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: echo
-          image: docker.io/python:3.11-slim
+          image: ` + pythonImage() + `
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -377,8 +425,7 @@ spec:
     spec:
       serviceAccountName: signed-agent-sa
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -425,7 +472,7 @@ spec:
               memory: 32Mi
       containers:
         - name: agent
-          image: docker.io/python:3.11-slim
+          image: ` + pythonImage() + `
           imagePullPolicy: IfNotPresent
           command: ["python3", "-m", "http.server", "8080", "--directory", "/app"]
           ports:
@@ -531,8 +578,7 @@ spec:
         app.kubernetes.io/name: runtime-agent-target
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -599,8 +645,7 @@ spec:
         app.kubernetes.io/name: runtime-tool-target
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -692,8 +737,7 @@ spec:
         app.kubernetes.io/name: runtime-sts-target
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -744,8 +788,7 @@ spec:
         app.kubernetes.io/name: runtime-minimal-target
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -796,8 +839,7 @@ spec:
         app.kubernetes.io/name: runtime-overrides-target
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -833,11 +875,11 @@ spec:
 
 // --- AuthBridge Injection E2E fixtures ---
 
-// authBridgeConfigMapFixture returns YAML for the 4 ConfigMaps required by
-// the auth bridge webhook: authbridge-config, authbridge-runtime-config, spiffe-helper-config, envoy-config.
+// authBridgeConfigMapFixture returns YAML for the 3 ConfigMaps required by
+// the auth bridge webhook: authbridge-config, authbridge-runtime-config, spiffe-helper-config.
 // Only the mandatory keys are set (ISSUER, KEYCLOAK_URL, KEYCLOAK_REALM, TOKEN_URL,
 // DEFAULT_OUTBOUND_POLICY). The operator reads additional optional keys
-// (EXPECTED_AUDIENCE, TARGET_AUDIENCE, SPIRE_ENABLED, etc.) which default to empty.
+// (EXPECTED_AUDIENCE, TARGET_AUDIENCE, etc.) which default to empty.
 func authBridgeConfigMapFixture() string {
 	return `apiVersion: v1
 kind: ConfigMap
@@ -871,67 +913,13 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: envoy-config
-  namespace: ` + authBridgeTestNamespace + `
-data:
-  envoy.yaml: |
-    admin:
-      address:
-        socket_address:
-          address: 127.0.0.1
-          port_value: 9901
-    static_resources:
-      listeners:
-        - name: outbound
-          address:
-            socket_address:
-              address: 0.0.0.0
-              port_value: 15123
-          filter_chains:
-            - filters:
-                - name: envoy.filters.network.tcp_proxy
-                  typed_config:
-                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-                    stat_prefix: outbound_passthrough
-                    cluster: original_dst
-        - name: inbound
-          address:
-            socket_address:
-              address: 0.0.0.0
-              port_value: 15124
-          filter_chains:
-            - filters:
-                - name: envoy.filters.network.tcp_proxy
-                  typed_config:
-                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-                    stat_prefix: inbound_passthrough
-                    cluster: local_app
-      clusters:
-        - name: original_dst
-          connect_timeout: 5s
-          type: ORIGINAL_DST
-          lb_policy: CLUSTER_PROVIDED
-        - name: local_app
-          connect_timeout: 5s
-          type: STATIC
-          load_assignment:
-            cluster_name: local_app
-            endpoints:
-              - lb_endpoints:
-                  - endpoint:
-                      address:
-                        socket_address:
-                          address: 127.0.0.1
-                          port_value: 8080
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: authbridge-runtime-config
   namespace: ` + authBridgeTestNamespace + `
 data:
   config.yaml: |
     mode: envoy-sidecar
+    mtls:
+      mode: disabled
     pipeline:
       inbound:
         plugins:
@@ -959,7 +947,6 @@ metadata:
   namespace: ` + authBridgeTestNamespace + `
 spec:
   type: agent
-  mtlsMode: disabled
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
@@ -999,13 +986,12 @@ spec:
     spec:
       serviceAccountName: authbridge-agent
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: echo
-          image: docker.io/python:3.11-slim
+          image: ` + pythonImage() + `
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -1067,8 +1053,7 @@ spec:
         kagenti.io/inject: disabled
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1093,7 +1078,6 @@ metadata:
   namespace: ` + authBridgeTestNamespace + `
 spec:
   type: agent
-  mtlsMode: disabled
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
@@ -1154,13 +1138,12 @@ spec:
     spec:
       serviceAccountName: combined-agent
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: echo
-          image: docker.io/python:3.11-slim
+          image: ` + pythonImage() + `
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -1233,8 +1216,8 @@ spec:
 `
 }
 
-// combinedConfigMapFixture returns YAML for the 4 AuthBridge ConfigMaps
-// (authbridge-config, spiffe-helper-config, envoy-config, authbridge-runtime-config)
+// combinedConfigMapFixture returns YAML for the 3 AuthBridge ConfigMaps
+// (authbridge-config, spiffe-helper-config, authbridge-runtime-config)
 // scoped to the combined test namespace.
 func combinedConfigMapFixture() string {
 	return `apiVersion: v1
@@ -1269,67 +1252,13 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: envoy-config
-  namespace: ` + combinedTestNamespace + `
-data:
-  envoy.yaml: |
-    admin:
-      address:
-        socket_address:
-          address: 127.0.0.1
-          port_value: 9901
-    static_resources:
-      listeners:
-        - name: outbound
-          address:
-            socket_address:
-              address: 0.0.0.0
-              port_value: 15123
-          filter_chains:
-            - filters:
-                - name: envoy.filters.network.tcp_proxy
-                  typed_config:
-                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-                    stat_prefix: outbound_passthrough
-                    cluster: original_dst
-        - name: inbound
-          address:
-            socket_address:
-              address: 0.0.0.0
-              port_value: 15124
-          filter_chains:
-            - filters:
-                - name: envoy.filters.network.tcp_proxy
-                  typed_config:
-                    "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-                    stat_prefix: inbound_passthrough
-                    cluster: local_app
-      clusters:
-        - name: original_dst
-          connect_timeout: 5s
-          type: ORIGINAL_DST
-          lb_policy: CLUSTER_PROVIDED
-        - name: local_app
-          connect_timeout: 5s
-          type: STATIC
-          load_assignment:
-            cluster_name: local_app
-            endpoints:
-              - lb_endpoints:
-                  - endpoint:
-                      address:
-                        socket_address:
-                          address: 127.0.0.1
-                          port_value: 8080
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: authbridge-runtime-config
   namespace: ` + combinedTestNamespace + `
 data:
   config.yaml: |
     mode: envoy-sidecar
+    mtls:
+      mode: disabled
     pipeline:
       inbound:
         plugins:
@@ -1375,8 +1304,7 @@ spec:
         kagenti.io/inject: disabled
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1433,8 +1361,7 @@ spec:
         kagenti.io/inject: disabled
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1487,8 +1414,7 @@ spec:
         kagenti.io/inject: disabled
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1571,8 +1497,7 @@ spec:
         app.kubernetes.io/name: istio-mesh-agent
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1622,8 +1547,7 @@ spec:
         app.kubernetes.io/name: istio-mesh-optout-agent
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: true` + runAsUserYAML("1000") + `
         seccompProfile:
           type: RuntimeDefault
       containers:

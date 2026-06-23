@@ -42,7 +42,6 @@ type NamespaceConfig struct {
 	// From "authbridge-config" ConfigMap
 	KeycloakURL           string
 	KeycloakRealm         string
-	SpireEnabled          string
 	PlatformClientIDs     string
 	TokenURL              string
 	Issuer                string
@@ -52,12 +51,10 @@ type NamespaceConfig struct {
 	DefaultOutboundPolicy string
 	ClientAuthType        string // "client-secret" or "federated-jwt"
 	SpiffeIdpAlias        string // Keycloak SPIFFE Identity Provider alias (e.g., "spire-spiffe")
+	JWTAudience           string // Audience for SPIFFE JWT-SVIDs (token-exchange identity.jwt_audience)
 
 	// From "spiffe-helper-config" ConfigMap
 	SpiffeHelperConf string // raw helper.conf content
-
-	// From "envoy-config" ConfigMap
-	EnvoyYAML string // raw envoy.yaml content
 
 	// From "authproxy-routes" ConfigMap
 	AuthproxyRoutesYAML string // raw routes.yaml content
@@ -78,7 +75,6 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 	} else {
 		cfg.KeycloakURL = cm.Data["KEYCLOAK_URL"]
 		cfg.KeycloakRealm = cm.Data["KEYCLOAK_REALM"]
-		cfg.SpireEnabled = cm.Data["SPIRE_ENABLED"]
 		cfg.PlatformClientIDs = cm.Data["PLATFORM_CLIENT_IDS"]
 		cfg.TokenURL = cm.Data["TOKEN_URL"]
 		cfg.Issuer = cm.Data["ISSUER"]
@@ -88,6 +84,7 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 		cfg.DefaultOutboundPolicy = cm.Data["DEFAULT_OUTBOUND_POLICY"]
 		cfg.ClientAuthType = cm.Data["CLIENT_AUTH_TYPE"]
 		cfg.SpiffeIdpAlias = cm.Data["SPIFFE_IDP_ALIAS"]
+		cfg.JWTAudience = cm.Data["JWT_AUDIENCE"]
 	}
 
 	// Note: keycloak-admin-secret is not read here. The resolved container builder
@@ -99,13 +96,6 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 		nsConfigLog.V(1).Info("ConfigMap not found", "name", SpiffeHelperConfigMapName, "namespace", namespace, "error", err)
 	} else {
 		cfg.SpiffeHelperConf = cm.Data["helper.conf"]
-	}
-
-	// Read "envoy-config" ConfigMap
-	if cm, err := getConfigMap(ctx, c, namespace, EnvoyConfigMapName); err != nil {
-		nsConfigLog.V(1).Info("ConfigMap not found", "name", EnvoyConfigMapName, "namespace", namespace, "error", err)
-	} else {
-		cfg.EnvoyYAML = cm.Data["envoy.yaml"]
 	}
 
 	// Read "authproxy-routes" ConfigMap
@@ -203,4 +193,26 @@ func ExtractMTLSMode(authbridgeYAML string) string {
 		return ""
 	}
 	return top.MTLS.Mode
+}
+
+// ExtractTLSBridgeMode parses an authbridge-runtime-config config.yaml string
+// and returns the value of its `tls_bridge.mode` field. Returns "" if the YAML
+// is empty, malformed, has no `tls_bridge` block, or its `mode` field is unset
+// — the caller then falls back to the next resolution layer (or "disabled").
+// Same surgical-parse pattern as ExtractMTLSMode.
+func ExtractTLSBridgeMode(authbridgeYAML string) string {
+	if authbridgeYAML == "" {
+		return ""
+	}
+	var top struct {
+		TLSBridge struct {
+			Mode string `json:"mode"`
+		} `json:"tls_bridge"`
+	}
+	if err := yaml.Unmarshal([]byte(authbridgeYAML), &top); err != nil {
+		nsConfigLog.Info("WARN: failed to parse authbridge-runtime-config config.yaml for tls_bridge.mode; falling back to next resolution layer",
+			"error", err.Error())
+		return ""
+	}
+	return top.TLSBridge.Mode
 }
