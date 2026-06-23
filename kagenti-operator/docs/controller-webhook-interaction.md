@@ -148,7 +148,7 @@ The controller computes the config hash from platform-level configuration only (
 └──────────────────────────────────────┘
 ```
 
-**CR-level overrides** (type, identity, authBridgeMode, mtlsMode, skills) are **not** included in the controller's config hash. The webhook reads these fields at pod CREATE time.
+**CR-level overrides** (type, authBridgeMode, mtlsMode, skills) are **not** included in the controller's config hash. The webhook reads these fields at pod CREATE time.
 
 **Feature gates** (`kagenti-feature-gates` ConfigMap) are platform-wide policy and are **not** part of the merge hierarchy. They control which sidecar components are enabled globally and cannot be overridden by namespace defaults or AgentRuntime CRs.
 
@@ -203,11 +203,9 @@ When a workload has `kagenti.io/type` labels applied manually (without an AgentR
 - Configuration comes from PlatformConfig (layer 1) and namespace ConfigMaps (layer 2) only
 - No controller manages the config hash — configuration drift is not detected automatically, and changes to cluster/namespace defaults do not trigger rolling updates
 - The controller does not watch or reconcile these workloads
-- Per-workload identity (SPIFFE trust domain) overrides are not available
 
 The AgentRuntime CR is the recommended approach because it provides:
 - Automatic rolling updates on config change (any layer)
-- Per-workload identity overrides
 - Status reporting (phase, conditions, configured pod count)
 - Graceful cleanup via finalizer
 
